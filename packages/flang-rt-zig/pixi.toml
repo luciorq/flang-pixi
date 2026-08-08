@@ -1,0 +1,26 @@
+# Stage 3: flang-rt-zig
+#
+# The Fortran runtime library (libflang_rt.runtime). Building it requires a
+# working Fortran compiler, so it consumes the stage-2 flang from ./channel as
+# a *build* dependency — this is the step that closes the bootstrap loop.
+#
+#   pixi run build-llvm
+#   pixi run build-flang
+#   pixi run build-flang-rt
+
+[workspace]
+channels = ["../../channel", "conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-arm64"]
+preview = ["pixi-build"]
+
+[package]
+name = "flang-rt-zig"
+version = "22.1.8"
+
+[package.build]
+# `backend.channels` is only where the build backend package is fetched from.
+# `flang-zig` / `llvm-zig` are resolved from the [workspace] channels above.
+backend = { name = "pixi-build-rattler-build", version = "0.4.*", channels = ["conda-forge"] }
+
+[package.build.config]
+recipe = "recipe/recipe.yaml"

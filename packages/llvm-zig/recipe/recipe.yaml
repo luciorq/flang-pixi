@@ -1,0 +1,123 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+#
+# Stage 1 — llvm-zig
+#
+# LLVM core + MLIR + Clang + LLD built entirely with `zig cc` / `zig c++`.
+#
+# WHY WE BUILD LLVM OURSELVES INSTEAD OF USING conda-forge llvmdev/clangdev/mlir:
+#   `zig c++` statically links its own bundled libc++ and *strips* any
+#   `-stdlib=` flag handed to it (see the conda-forge zig wrapper,
+#   recipe/scripts/_zig-cc-common.sh). conda-forge's llvmdev/clangdev/mlir are
+#   built against libstdc++ (Linux) / MSVC STL (Windows). Those C++ ABIs are
+#   mutually incompatible — std::string alone has a different layout and
+#   different mangling. So a zig-built flang cannot link conda-forge's LLVM.
+#   See docs/02-architecture-decisions.md for the full argument and the
+#   experiment that established it.
+#
+# NOTHING IN THIS RECIPE HAS BEEN COMPILED YET. Treat every CMake flag as a
+# reasoned starting point, not a verified fact. docs/10-status-log.md tracks
+# what has actually been run.
+
+context:
+  version: "22.1.8"
+  major: "22"
+  # Projects enabled in the stage-1 tree.
+  #   clang : flang links clangBasic/clangDriver/clangFrontend, and the clang
+  #           driver gives us a working linker driver at runtime.
+  #   mlir  : flang's code generation is MLIR-based. Non-negotiable.
+  #   lld   : so the shipped toolchain can link without a system linker.
+  llvm_projects: "clang;lld;mlir"
+
+package:
+  name: llvm-zig
+  version: ${{ version }}
+
+source:
+  url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
+  # Cross-checked against conda-forge/flang-feedstock and
+  # conda-forge/flang-rt-feedstock, which both pin this same tarball.
+  sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
+
+build:
+  number: 0
+  # `zig_` prefix in the build string is a deliberate warning label: these
+  # artifacts are NOT interchangeable with conda-forge's llvm packages.
+  string: zig_${{ hash }}_${{ build_number }}
+  script:
+    # Variant keys are surfaced to the scripts explicitly rather than relying on
+    # rattler-build's implicit env export — referencing them here is also what
+    # marks them as "used variants" so they participate in the build hash.
+    env:
+      LLVM_PROJECTS: ${{ llvm_projects }}
+      LLVM_TARGETS_TO_BUILD: ${{ llvm_targets_to_build }}
+      LLVM_PARALLEL_LINK_JOBS: ${{ llvm_parallel_link_jobs }}
+    # No extension: rattler-build appends .sh on unix and .bat on Windows.
+    file: build
+
+requirements:
+  build:
+    # NOTE: `${{ compiler('zig') }}` resolves to `zig_<target_platform>` using
+    # the `zig_compiler` / `zig_compiler_version` variant keys defined in
+    # variants.yaml. It does NOT export CC/CXX — it exports ZIG_CC/ZIG_CXX.
+    # build.sh wires those into CMake explicitly.
+    #
+    # For a cross build this correctly resolves to the *hosted cross-compiler*
+    # package — e.g. targeting win-arm64 from a win-64 machine installs
+    # `zig_win-arm64`, which is published only into the win-64 subdir.
+    - ${{ compiler('zig') }}
+    # Cross builds only: LLVM needs tblgen and friends as *native* executables
+    # to generate sources during the build. Rather than have LLVM configure a
+    # nested native sub-build (CROSS_TOOLCHAIN_FLAGS_NATIVE), we hand it a
+    # previously built native llvm-zig via LLVM_NATIVE_TOOL_DIR. This is why
+    # win-arm64 can only be built *after* win-64 — see docs/05-platform-matrix.md.
+    - if: build_platform != target_platform
+      then:
+        - llvm-zig ==${{ version }}
+    # On Linux this pulls sysroot_linux-64 2.28.*, which the zig wrapper
+    # auto-detects at $CONDA_PREFIX/<arch>-conda-linux-gnu/sysroot and passes
+    # as -isysroot. That is how we get a glibc floor (2.28 by default; the
+    # version comes from c_stdlib_version in variants.yaml).
+    # On osx it pins MACOSX_DEPLOYMENT_TARGET, which the zig wrapper folds into
+    # the -target triple at runtime.
+    # On win it pulls vs2022 — see docs/05-platform-matrix.md, OPEN QUESTION W1.
+    - ${{ stdlib('c') }}
+    - cmake >=3.28
+    - ninja
+    - python
+  host: []
+  run_exports:
+    strong:
+      - ${{ pin_subpackage('llvm-zig', upper_bound='x.x') }}
+
+tests:
+  - script:
+      - if: unix
+        then:
+          - test -f "${PREFIX}/bin/llvm-config"
+          - test -f "${PREFIX}/bin/clang"
+          - test -f "${PREFIX}/bin/mlir-tblgen"
+          - test -f "${PREFIX}/lib/cmake/llvm/LLVMConfig.cmake"
+          - test -f "${PREFIX}/lib/cmake/clang/ClangConfig.cmake"
+          - test -f "${PREFIX}/lib/cmake/mlir/MLIRConfig.cmake"
+          - "${PREFIX}/bin/llvm-config --version"
+      - if: win
+        then:
+          - if not exist %LIBRARY_BIN%\llvm-config.exe exit 1
+          - if not exist %LIBRARY_BIN%\mlir-tblgen.exe exit 1
+          - if not exist %LIBRARY_LIB%\cmake\mlir\MLIRConfig.cmake exit 1
+
+about:
+  homepage: https://llvm.org
+  license: Apache-2.0 WITH LLVM-exception
+  license_file: llvm/LICENSE.TXT
+  summary: LLVM + MLIR + Clang + LLD built with the conda-forge zig toolchain
+  description: |
+    A zig-cc-built LLVM development tree used exclusively as the substrate for
+    building LLVM Flang. It is ABI-incompatible with conda-forge's llvmdev /
+    clangdev / mlir packages (zig statically links libc++; conda-forge uses
+    libstdc++ / MSVC STL) and must never be co-installed as a substitute.
+  repository: https://github.com/llvm/llvm-project
+
+extra:
+  recipe-maintainers:
+    - luciorq

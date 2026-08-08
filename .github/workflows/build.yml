@@ -1,0 +1,164 @@
+name: build
+
+# Nothing here has been run yet. See docs/08-ci.md for the reasoning behind the
+# matrix and docs/10-status-log.md for what has actually been executed.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 0. Fast, cheap, and it gates everything else: if `zig c++` cannot
+  # compile a C++17 program on a runner, there is no point spending six hours
+  # discovering that inside an LLVM build.
+  # ---------------------------------------------------------------------------
+  probe:
+    name: probe (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-64,  runner: ubuntu-latest }
+          - { target: osx-64,    runner: macos-13 }
+          - { target: osx-arm64, runner: macos-14 }
+          - { target: win-64,    runner: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          environments: zig-probe
+          cache: true
+      - name: probe
+        if: runner.os != 'Windows'
+        run: pixi run probe
+      - name: probe (windows)
+        if: runner.os == 'Windows'
+        run: pixi run probe-win
+
+  # ---------------------------------------------------------------------------
+  # Stages 1-3, natively, one job per target.
+  #
+  # These are long. GitHub-hosted runners cap a job at 6 hours; if stage 1 alone
+  # approaches that, split it into its own job and pass ./channel between jobs
+  # as an artifact. See docs/08-ci.md.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.target }})
+    needs: probe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-64,  runner: ubuntu-latest }
+          - { target: osx-64,    runner: macos-13 }
+          - { target: osx-arm64, runner: macos-14 }
+          - { target: win-64,    runner: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+
+      - name: free disk space (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h
+
+      - name: stage 1 — llvm-zig
+        run: pixi run build-llvm
+
+      - name: stage 2 — flang-zig
+        run: pixi run build-flang
+
+      - name: stage 3 — flang-rt-zig
+        run: pixi run build-flang-rt
+
+      - name: smoke test
+        if: runner.os != 'Windows'
+        run: pixi run smoke
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: channel-${{ matrix.target }}
+          path: channel/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # win-arm64 is cross-only: conda-forge publishes zig_win-arm64 exclusively
+  # into the win-64 subdir, so no win-arm64 machine can host its own build.
+  # This job therefore runs on windows-latest (x86_64) and cross-builds.
+  #
+  # It rewrites llvm_targets_to_build to include AArch64 before stage 1: the
+  # native win-64 flang produced here is used as CMAKE_Fortran_COMPILER for the
+  # arm64 runtime in stage 3, and an X86-only flang cannot emit arm64 code.
+  # ---------------------------------------------------------------------------
+  build-win-arm64:
+    name: build (win-arm64, cross from win-64)
+    needs: probe
+    runs-on: windows-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+
+      - name: enable AArch64 backend for the host toolchain
+        shell: pwsh
+        run: |
+          $f = "packages/llvm-zig/recipe/variants.yaml"
+          (Get-Content $f) -replace '^  - "Native"$', '  - "X86;AArch64"' | Set-Content $f
+          Get-Content $f | Select-String -Context 2 "X86;AArch64"
+
+      - name: native win-64 toolchain (needed for tblgen + the Fortran compiler)
+        run: |
+          pixi run build-llvm
+          pixi run build-flang
+
+      - name: cross-build win-arm64
+        run: pixi run build-all-winarm
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: channel-win-arm64
+          path: channel/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # A win-arm64 binary cannot run on the win-64 host that produced it, so the
+  # package tests that execute flang.exe are skipped during the cross build.
+  # This job is the only place win-arm64 is actually validated.
+  # ---------------------------------------------------------------------------
+  validate-win-arm64:
+    name: validate (win-arm64)
+    needs: build-win-arm64
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: channel-win-arm64
+          path: channel
+      - uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+      - name: install and run
+        shell: pwsh
+        run: |
+          pixi exec --channel ./channel --channel conda-forge `
+            --spec flang-zig --spec flang-rt-zig `
+            flang tests\hello.f90 -o hello.exe
+          .\hello.exe

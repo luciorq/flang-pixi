@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+#
+# Stage 2 — flang-zig
+#
+# LLVM Flang, built *standalone* (out of tree) against the stage-1 llvm-zig
+# install, exactly the way conda-forge/flang-feedstock builds against
+# llvmdev/clangdev/mlir — but with zig as the C/C++ compiler and with our own
+# LLVM instead of conda-forge's, because of the libc++/libstdc++ ABI split
+# documented in docs/02-architecture-decisions.md.
+#
+# The Fortran runtime is deliberately excluded here (FLANG_INCLUDE_RUNTIME=OFF).
+# It cannot be built in this stage anyway: compiling flang-rt requires a working
+# Fortran compiler, which is the thing this stage produces. Stage 3 closes that
+# loop.
+#
+# NOT YET COMPILED. See docs/10-status-log.md.
+
+context:
+  version: "22.1.8"
+  major: "22"
+
+package:
+  name: flang-zig
+  version: ${{ version }}
+
+source:
+  url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
+  sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
+
+build:
+  number: 0
+  string: zig_${{ hash }}_${{ build_number }}
+  script:
+    env:
+      FLANG_PARALLEL_COMPILE_JOBS: ${{ flang_parallel_compile_jobs }}
+    file: build
+
+requirements:
+  build:
+    - ${{ compiler('zig') }}
+    - ${{ stdlib('c') }}
+    - cmake >=3.28
+    # conda-forge pins `ninja <1.13` for flang because of a Windows path-escaping
+    # bug (a `...\tools` path being read as a tab). Mirrored here.
+    - ninja <1.13
+    - python
+    # Cross builds (win-64 -> win-arm64) need llvm-tblgen / mlir-tblgen /
+    # clang-tblgen as native executables.
+    - if: build_platform != target_platform
+      then:
+        - llvm-zig ==${{ version }}
+  host:
+    # Stage 1. The `==` pin is not cosmetic: flang links LLVM/MLIR/Clang static
+    # archives and shares headers with them; a version skew is an immediate
+    # link failure at best.
+    - llvm-zig ==${{ version }}
+  run:
+    # flang needs the stage-1 tree at *runtime* too: it invokes lld to link, and
+    # reads the clang resource directory for target headers/builtins.
+    - llvm-zig ==${{ version }}
+  run_exports:
+    weak:
+      - ${{ pin_subpackage('flang-zig', upper_bound='x.x') }}
+
+tests:
+  - script:
+      - if: unix
+        then:
+          - test -f "${PREFIX}/bin/flang"
+          - "${PREFIX}/bin/flang --version"
+          # Deliberately does NOT link: there is no Fortran runtime until
+          # stage 3. This only proves the frontend parses, semantically
+          # analyses, and lowers through MLIR to LLVM IR.
+          - "${PREFIX}/bin/flang -S -emit-llvm hello.f90 -o hello.ll"
+          - grep -q "define" hello.ll
+      - if: win
+        then:
+          - if not exist %LIBRARY_BIN%\flang.exe exit 1
+          - "%LIBRARY_BIN%\\flang.exe --version"
+          - "%LIBRARY_BIN%\\flang.exe -S -emit-llvm hello.f90 -o hello.ll"
+    files:
+      recipe:
+        - hello.f90
+
+about:
+  homepage: https://flang.llvm.org
+  license: Apache-2.0 WITH LLVM-exception
+  license_file: flang/LICENSE.TXT
+  summary: LLVM Flang Fortran compiler driver, built with the conda-forge zig toolchain
+  description: |
+    The `flang` driver and its supporting libraries, built out-of-tree against
+    llvm-zig. Contains no Fortran runtime — install flang-rt-zig for that.
+  repository: https://github.com/llvm/llvm-project
+
+extra:
+  recipe-maintainers:
+    - luciorq

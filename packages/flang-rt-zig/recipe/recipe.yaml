@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+#
+# Stage 3 — flang-rt-zig
+#
+# The Fortran runtime. Since LLVM 21 this lives in `flang-rt` and is built as an
+# LLVM *runtime* (from the `runtimes/` directory), not as a project — the same
+# structure conda-forge/flang-rt-feedstock uses.
+#
+# The bootstrap: flang-rt is partly written in Fortran, so building it needs a
+# Fortran compiler. That compiler is the stage-2 flang, pulled in as a build
+# dependency. This is why the three stages cannot be collapsed into one CMake
+# invocation without an in-tree bootstrap.
+#
+# NOT YET COMPILED. See docs/10-status-log.md.
+
+context:
+  version: "22.1.8"
+  major: "22"
+
+package:
+  name: flang-rt-zig
+  version: ${{ version }}
+
+source:
+  url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
+  sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
+
+build:
+  number: 0
+  string: zig_${{ hash }}_${{ build_number }}
+  script:
+    file: build
+  # macOS: upstream flang-rt has no macOS support story yet and conda-forge
+  # skips flang entirely on osx. We do NOT skip here — proving or disproving
+  # macOS is one of the stated goals of this project (docs/01-goals-and-scope.md)
+  # — but expect this to be the stage that fails first.
+  # To skip while iterating on linux/windows, uncomment:
+  # skip:
+  #   - match(target_platform, "osx-*")
+
+requirements:
+  build:
+    - ${{ compiler('zig') }}
+    - ${{ stdlib('c') }}
+    - cmake >=3.28
+    - ninja
+    - python
+    # The Fortran compiler that builds the runtime. In `build`, not `host`,
+    # because it must execute on the build machine.
+    - flang-zig ==${{ version }}
+    - llvm-zig ==${{ version }}
+  host:
+    - llvm-zig ==${{ version }}
+  run:
+    - llvm-zig ==${{ version }}
+  run_constraints:
+    # Guard rail: the ancient PGI-derived `libflang` and conda-forge's
+    # libstdc++-built `libflang-rt` are both ABI-incompatible with this one.
+    - libflang <0.0a0
+    - libflang-rt <0.0a0
+
+tests:
+  - script:
+      - if: unix
+        then:
+          # Layout matches upstream: the runtime installs into the clang
+          # resource directory under a target-specific subdirectory, and we
+          # additionally expose it at $PREFIX/lib. See build.sh.
+          - test -f "${PREFIX}/lib/libflang_rt.runtime.a"
+      - if: win
+        then:
+          - if not exist %LIBRARY_LIB%\flang_rt.runtime.static.lib exit 1
+
+  # The real proof: compile AND link AND run a Fortran program.
+  - script:
+      - if: unix
+        then:
+          - flang hello.f90 -o hello
+          - ./hello
+      - if: win
+        then:
+          - flang.exe hello.f90 -o hello.exe
+          - hello.exe
+    requirements:
+      run:
+        - flang-zig ==${{ version }}
+    files:
+      recipe:
+        - hello.f90
+
+about:
+  homepage: https://flang.llvm.org
+  license: Apache-2.0 WITH LLVM-exception
+  license_file: flang/LICENSE.TXT
+  summary: Fortran runtime library for flang-zig
+  repository: https://github.com/llvm/llvm-project
+
+extra:
+  recipe-maintainers:
+    - luciorq

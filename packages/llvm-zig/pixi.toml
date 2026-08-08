@@ -1,0 +1,29 @@
+# Stage 1: llvm-zig
+#
+# LLVM + MLIR + Clang + LLD, compiled with `zig cc` / `zig c++`.
+# This is the substrate that flang-zig (stage 2) links against.
+#
+# Build with, from the repo root:   pixi run build-llvm
+# Or directly:                      pixi build --path packages/llvm-zig -o output
+#
+# Binary dependencies are declared in recipe/recipe.yaml, NOT here — that is a
+# hard rule of the pixi-build-rattler-build backend.
+
+[workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-arm64"]
+preview = ["pixi-build"]
+
+[package]
+name = "llvm-zig"
+version = "22.1.8"
+
+[package.build]
+# `backend.channels` is where the BUILD BACKEND package itself is fetched from.
+# It is NOT where the recipe's build/host dependencies are resolved — those come
+# from the [workspace] channels above. (A top-level `channels` key here is
+# deprecated in favour of this one.)
+backend = { name = "pixi-build-rattler-build", version = "0.4.*", channels = ["conda-forge"] }
+
+[package.build.config]
+recipe = "recipe/recipe.yaml"

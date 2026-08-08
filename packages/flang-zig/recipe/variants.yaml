@@ -1,0 +1,47 @@
+# Variant configuration for stage 2. See packages/llvm-zig/recipe/variants.yaml
+# for why zig_compiler / c_stdlib have to be spelled out.
+zig_compiler:
+  - zig
+zig_compiler_version:
+  - "0.16"
+
+# NOTE the shape: `then:` must be a LIST, not a scalar. Writing
+#   - if: linux
+#     then: "2.28"
+# silently fails to override and you fall back to rattler-build's built-in
+# default. This is the same form conda-forge/zig-feedstock uses.
+c_stdlib:
+  - if: linux
+    then:
+      - sysroot
+  - if: osx
+    then:
+      - macosx_deployment_target
+  - if: win
+    then:
+      - vs
+c_stdlib_version:
+  - if: linux
+    then:
+      # conda-forge's current default glibc floor. sysroot_linux-64 also ships
+      # 2.12/2.17/2.34/2.39 if you need a different one.
+      - "2.28"
+  - if: osx
+    then:
+      - "11.0"
+  - if: win
+    then:
+      - "2022.14"
+
+# Compile parallelism for flang specifically.
+#
+# This is the single most important number in the whole project. Several flang
+# translation units — flang/lib/Evaluate/fold-*.cpp and much of
+# flang/lib/Lower/ — are famous for needing many GB of RAM each. conda-forge
+# builds flang at a hard `-j2` for exactly this reason, on CI machines with
+# 16 GB. Raising this is the fastest way to turn a 90-minute build into an
+# OOM-killed 80-minute build.
+#
+# See docs/09-risks-and-open-questions.md, R2.
+flang_parallel_compile_jobs:
+  - "2"

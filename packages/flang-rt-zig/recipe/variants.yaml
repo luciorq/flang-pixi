@@ -1,0 +1,32 @@
+zig_compiler:
+  - zig
+zig_compiler_version:
+  - "0.16"
+
+# NOTE the shape: `then:` must be a LIST, not a scalar. Writing
+#   - if: linux
+#     then: "2.28"
+# silently fails to override and you fall back to rattler-build's built-in
+# default. This is the same form conda-forge/zig-feedstock uses.
+c_stdlib:
+  - if: linux
+    then:
+      - sysroot
+  - if: osx
+    then:
+      - macosx_deployment_target
+  - if: win
+    then:
+      - vs
+c_stdlib_version:
+  - if: linux
+    then:
+      # conda-forge's current default glibc floor. sysroot_linux-64 also ships
+      # 2.12/2.17/2.34/2.39 if you need a different one.
+      - "2.28"
+  - if: osx
+    then:
+      - "11.0"
+  - if: win
+    then:
+      - "2022.14"

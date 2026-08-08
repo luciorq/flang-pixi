@@ -1,0 +1,54 @@
+# Variant configuration for stage 1.
+#
+# `zig_compiler` / `zig_compiler_version` are what make `${{ compiler('zig') }}`
+# expand to `zig_<target_platform> <version>`. rattler-build has no built-in
+# default for the "zig" language, so these MUST be declared. They mirror
+# conda-forge/zig-feedstock's own recipe/variants.yaml.
+zig_compiler:
+  - zig
+zig_compiler_version:
+  - "0.16"
+
+# `${{ stdlib('c') }}` expansion. Same values conda-forge uses.
+# NOTE the shape: `then:` must be a LIST, not a scalar. Writing
+#   - if: linux
+#     then: "2.28"
+# silently fails to override and you fall back to rattler-build's built-in
+# default. This is the same form conda-forge/zig-feedstock uses.
+c_stdlib:
+  - if: linux
+    then:
+      - sysroot
+  - if: osx
+    then:
+      - macosx_deployment_target
+  - if: win
+    then:
+      - vs
+c_stdlib_version:
+  - if: linux
+    then:
+      # conda-forge's current default glibc floor. sysroot_linux-64 also ships
+      # 2.12/2.17/2.34/2.39 if you need a different one.
+      - "2.28"
+  - if: osx
+    then:
+      - "11.0"
+  - if: win
+    then:
+      - "2022.14"
+
+# Which LLVM backends to compile.
+#
+# "Native" keeps the first bring-up as short as possible (an LLVM release build
+# with every backend roughly doubles compile time). Switch to
+# "X86;AArch64;NVPTX;AMDGPU" once the toolchain is proven — see
+# docs/04-build-stages.md, "Tuning knobs".
+llvm_targets_to_build:
+  - "Native"
+
+# Link-step parallelism. LLVM/Flang link steps are the memory hogs; conda-forge
+# builds flang at -j2 for exactly this reason. 1 is the safe default on CI
+# runners with <= 16 GB RAM.
+llvm_parallel_link_jobs:
+  - "1"

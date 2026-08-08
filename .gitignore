@@ -38,3 +38,21 @@ uv.lock
 *.so
 *.dylib
 *.dll
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# --- flang-pixi build outputs ---
+# Local conda channel: the hand-off between build stages (multi-GB).
+channel/
+output/
+# rattler-build intermediate build trees
+.pixi/bld/
+packages/*/.pixi/
+# throwaway env created by scripts/smoke-test.sh
+.smoke/
+.abi-probe/
+# zig's global cache, if it ever lands in-tree
+.zig-global-cache/
+.zig-cache/
+*.conda

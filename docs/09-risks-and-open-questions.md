@@ -133,22 +133,41 @@ libflang_rt.runtime.a", or the driver cannot find the runtime at link time.
 
 ---
 
-## R8 — The driver config file may be wrong or insufficient
+## ~~R8~~ — RESOLVED: the driver config file mechanism was always correct; the real gaps were elsewhere
 
-**Likelihood: medium. Impact: `flang hello.f90` fails for users even though the
-package tests pass.**
+**Was:** whether flang looks for `flang.cfg` under exactly that name, and
+whether `<CFGDIR>` expands as expected, was assumed but not verified.
 
-Stage 2 writes `<triple>-flang.cfg` and `flang.cfg` with `-L`, `-rpath` and (on
-Linux) `--sysroot`, copying what conda-forge's clangdev does. Whether flang
-looks for `flang.cfg` under exactly that name, and whether `<CFGDIR>` expands as
-expected, is **assumed, not verified**.
+**Verified, on linux-64:** the mechanism itself works exactly as documented —
+`<CFGDIR>` expansion, `-rpath`, `--sysroot`, and arbitrary extra flags
+(`-fuse-ld=lld`, `--rtlib=compiler-rt`) all take effect correctly the moment
+the file is actually written and actually shipped with the right runtime
+dependencies behind it. `pixi run smoke` now passes fully:
+`flang tests/hello.f90 -o hello && ./hello` → `sum of squares 1..10 = 385.` /
+`hello: OK`; `tests/modules.f90` also passes (derived types, allocatables,
+array intrinsics).
 
-*Recognise it:* `flang hello.f90` fails to find `crt1.o` or `libflang_rt`, while
-`flang -S -emit-llvm hello.f90` works.
+Getting there required finding three separate, real gaps — none of them in
+the `.cfg` mechanism itself:
 
-*Mitigation:* stage 3's second package test compiles *and links and runs*, so
-this gets caught inside the build rather than by a user. If it fails, check
-`flang -### hello.f90` to see the real link line.
+1. **The file was never written at all** — `flang-zig/recipe/build.sh` checked
+   `CONDA_TOOLCHAIN_HOST` but never set a fallback for it (unlike
+   `llvm-zig/recipe/build.sh`), and nothing in a zig-only toolchain sets that
+   variable. Fixed by copying the same fallback `case` block.
+2. **`sysroot_linux-64` was never a runtime dependency** — `--sysroot=...`
+   pointed at a path that only existed inside the build sandbox. Fixed by
+   adding it to `flang-zig/recipe/recipe.yaml`'s `run:` list.
+3. **No GCC-independent CRT objects existed anywhere** — `flang.exe` is a
+   genuine Clang-derived driver (not `zig cc`) and does classic GNU/Linux
+   toolchain probing at runtime, expecting `crtbeginS.o`/`libgcc` the way a
+   real GCC install would provide them. This toolchain has no GCC anywhere
+   (ADR-1). Fixed by building LLVM's `compiler-rt` (with
+   `COMPILER_RT_BUILD_CRT=ON`) alongside `flang-rt` in stage 3, relocating its
+   output into the clang resource directory where Clang's driver actually
+   searches, and adding `-fuse-ld=lld --rtlib=compiler-rt` to `flang.cfg`.
+
+Full details, including how each was validated cheaply before committing to
+expensive full rebuilds, are in [10-status-log.md](10-status-log.md).
 
 ---
 

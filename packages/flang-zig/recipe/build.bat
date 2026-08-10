@@ -16,6 +16,7 @@ set "ZIG_CC_CMAKE=%ZIG_CC:\=/%"
 set "ZIG_CXX_CMAKE=%ZIG_CXX:\=/%"
 set "ZIG_AR_CMAKE=%ZIG_AR:\=/%"
 set "ZIG_RANLIB_CMAKE=%ZIG_RANLIB:\=/%"
+set "RECIPE_DIR_CMAKE=%RECIPE_DIR:\=/%"
 
 if not defined FLANG_PARALLEL_COMPILE_JOBS set "FLANG_PARALLEL_COMPILE_JOBS=2"
 
@@ -57,6 +58,7 @@ cmake -G Ninja -S flang -B build %WIN_ABI_ARGS% %CROSS_ARGS% ^
   -DCMAKE_CXX_STANDARD=17 ^
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ^
   -DCMAKE_MODULE_PATH="%SRC_DIR%/cmake/Modules" ^
+  -DCMAKE_PROJECT_INCLUDE="%RECIPE_DIR_CMAKE%/cmake-project-include.cmake" ^
   -DBUILD_SHARED_LIBS=OFF ^
   -DLLVM_DIR="%LIBRARY_LIB%/cmake/llvm" ^
   -DLLVM_CMAKE_DIR="%LIBRARY_LIB%/cmake/llvm" ^

@@ -158,6 +158,20 @@ fi
 #       microarchitecture benchmarking tool, irrelevant to building flang —
 #       disable it rather than raise the glibc floor for its sake.
 #
+# CMAKE_BUILD_WITH_INSTALL_RPATH=ON avoids a specific failure mode:
+# `packages/<pkg>/.pixi` may be a symlink to a roomier disk (see
+# docs/07-local-workflow.md, "Disk space on constrained or shared hosts").
+# $PREFIX/$BUILD_PREFIX then refer to the LOGICAL (symlinked) path, but the
+# linker can embed the REAL (canonical, post-symlink) path in a binary's
+# RUNPATH. At `cmake --install` time, CMake's file(RPATH_CHANGE) does a
+# literal byte-for-byte match against the OLD rpath it recorded at configure
+# time (the logical path) and fails when the binary's actual embedded rpath
+# (the real path) does not match, even though both refer to the identical
+# file. Building directly with the install rpath sidesteps the rewrite step
+# entirely, since old==new before it would even run. Found via flang-zig's
+# stage-2 build failing on `bin/bbc`'s install step with exactly this
+# mismatch; see docs/10-status-log.md. Safe here because the build tree's
+# bin/../lib layout matches the install prefix's.
 cmake -G Ninja -S llvm -B build \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
   -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
@@ -166,6 +180,7 @@ cmake -G Ninja -S llvm -B build \
   -DCMAKE_RANLIB="${ZIG_RANLIB}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
   -DCMAKE_PREFIX_PATH="${PREFIX}" \
   -DCMAKE_CXX_STANDARD=17 \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \

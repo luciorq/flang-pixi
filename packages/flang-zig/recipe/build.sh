@@ -9,6 +9,11 @@
 #   * BUILD_SHARED_LIBS=OFF, because stage 1 produced static archives (no
 #     libLLVM.so — see llvm-zig/recipe/build.sh for why)
 #   * LLVM_EXTERNAL_LIT / FLANG_INCLUDE_TESTS are off, so we don't need `lit`
+#   * CMAKE_PROJECT_INCLUDE injects cmake-project-include.cmake, working around
+#     a missing include(CMakePushCheckState) in flang's own
+#     cmake/modules/FlangCommon.cmake — see that file for the full story. Only
+#     surfaces in a standalone/out-of-tree flang build (this one, and
+#     conda-forge's), not an in-tree LLVM super-build.
 #
 set -euxo pipefail
 
@@ -26,6 +31,26 @@ export CFLAGS="-O2 -fPIC"
 export CXXFLAGS="-O2 -fPIC"
 
 FLANG_PARALLEL_COMPILE_JOBS="${FLANG_PARALLEL_COMPILE_JOBS:-2}"
+
+# --- host triple -------------------------------------------------------------
+# Normally set by conda-forge's gcc/clang compiler activation, which we don't
+# use (zig is our compiler). Without this fallback, CONDA_TOOLCHAIN_HOST stays
+# empty and the driver-config-file block near the end of this script silently
+# never runs — no <triple>-flang.cfg gets written, and `flang hello.f90`
+# outside the build sandbox fails at RUNTIME with "libflang_rt.runtime.so:
+# cannot open shared object file", because the produced binary has no rpath
+# back to $PREFIX/lib. Found via `pixi run smoke` failing exactly that way on
+# the first real link+run of our own flang; see docs/10-status-log.md. Kept in
+# sync with the same fallback in llvm-zig/recipe/build.sh.
+if [[ -z "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
+  case "${target_platform}" in
+    linux-64)       CONDA_TOOLCHAIN_HOST="x86_64-conda-linux-gnu" ;;
+    linux-aarch64)  CONDA_TOOLCHAIN_HOST="aarch64-conda-linux-gnu" ;;
+    osx-64)         CONDA_TOOLCHAIN_HOST="x86_64-apple-darwin13.4.0" ;;
+    osx-arm64)      CONDA_TOOLCHAIN_HOST="arm64-apple-darwin20.0.0" ;;
+    *)              CONDA_TOOLCHAIN_HOST="" ;;
+  esac
+fi
 
 # Sanity: fail immediately and legibly if stage 1 is not actually in the host
 # prefix, rather than after CMake has produced a wall of "LLVM_DIR-NOTFOUND".
@@ -65,6 +90,20 @@ if [[ "${build_platform}" != "${target_platform}" ]]; then
   )
 fi
 
+# CMAKE_BUILD_WITH_INSTALL_RPATH=ON avoids a specific failure mode:
+# `packages/<pkg>/.pixi` may be a symlink to a roomier disk (see
+# docs/07-local-workflow.md, "Disk space on constrained or shared hosts").
+# $PREFIX/$BUILD_PREFIX then refer to the LOGICAL (symlinked) path, but the
+# linker can embed the REAL (canonical, post-symlink) path in a binary's
+# RUNPATH. At `cmake --install` time, CMake's file(RPATH_CHANGE) does a
+# literal byte-for-byte match against the OLD rpath it recorded at configure
+# time (the logical path) and fails when the binary's actual embedded rpath
+# (the real path) does not match, even though both refer to the identical
+# file. Building directly with the install rpath sidesteps the rewrite step
+# entirely, since old==new before it would even run. Found via flang-zig's
+# stage-2 build failing on `bin/bbc`'s install step with exactly this
+# mismatch; see docs/10-status-log.md. Safe here because the build tree's
+# bin/../lib layout matches the install prefix's.
 cmake -G Ninja -S flang -B build \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"} \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
@@ -74,11 +113,13 @@ cmake -G Ninja -S flang -B build \
   -DCMAKE_RANLIB="${ZIG_RANLIB}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
   -DCMAKE_PREFIX_PATH="${PREFIX}" \
   -DCMAKE_CXX_STANDARD=17 \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_MODULE_PATH="${SRC_DIR}/cmake/Modules" \
+  -DCMAKE_PROJECT_INCLUDE="${RECIPE_DIR}/cmake-project-include.cmake" \
   -DBUILD_SHARED_LIBS=OFF \
   -DLLVM_DIR="${PREFIX}/lib/cmake/llvm" \
   -DLLVM_CMAKE_DIR="${PREFIX}/lib/cmake/llvm" \
@@ -102,6 +143,18 @@ test -x "${PREFIX}/bin/flang"
 # environment's lib dir and (on Linux) the conda sysroot. Do the same, otherwise
 # a `flang hello.f90` in an activated env will not find libflang_rt or the
 # sysroot's crt objects.
+#
+# -fuse-ld=lld / --rtlib=compiler-rt: flang.exe is a genuine Clang-derived
+# driver (not `zig cc`) and does its own classic GNU/Linux toolchain probing
+# at RUNTIME — left to its defaults it looks for the system `ld` and for
+# GCC's crtbeginS.o/crtendS.o/libgcc, none of which exist anywhere in this
+# toolchain by design (ADR-1, no GCC at all). `-fuse-ld=lld` routes through
+# llvm-zig's own bundled ld.lld (already a runtime dependency) instead of
+# whatever `ld` happens to be on the host's PATH. `--rtlib=compiler-rt`
+# makes the driver look for LLVM's own GCC-independent CRT objects and
+# builtins library, which flang-rt-zig (stage 3) builds alongside flang-rt —
+# see that package's build.sh for the COMPILER_RT_BUILD_CRT=ON side. Found
+# via `pixi run smoke`'s first real link+run; see docs/10-status-log.md.
 if [[ -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
   cfg="${PREFIX}/bin/${CONDA_TOOLCHAIN_HOST}-flang.cfg"
   {
@@ -110,6 +163,8 @@ if [[ -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
     if [[ "${target_platform}" == linux-* ]]; then
       echo '$-Wl,-rpath-link,<CFGDIR>/../lib'
       echo "--sysroot=<CFGDIR>/../${CONDA_TOOLCHAIN_HOST}/sysroot"
+      echo '-fuse-ld=lld'
+      echo '--rtlib=compiler-rt'
     fi
   } > "${cfg}"
   # The driver looks for <triple>-flang.cfg *and* flang.cfg; provide both so it

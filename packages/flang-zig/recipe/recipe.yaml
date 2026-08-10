@@ -58,6 +58,19 @@ requirements:
     # flang needs the stage-1 tree at *runtime* too: it invokes lld to link, and
     # reads the clang resource directory for target headers/builtins.
     - llvm-zig ==${{ version }}
+    # flang's own driver does independent, GCC-style sysroot/CRT-object
+    # discovery at link time (it is a Clang-derived driver, not `zig cc` —
+    # zig's bundled-libc trick doesn't apply here). flang.cfg points
+    # `--sysroot` at `<CFGDIR>/../${target_platform's conda triple}/sysroot`,
+    # the same convention conda-forge's clangdev/flang.cfg use — but unlike
+    # conda-forge, we never made the sysroot itself a runtime dependency, so
+    # outside the build sandbox that path resolved to nothing and linking any
+    # program failed with "cannot find Scrt1.o" / "-lc" / "-lgcc" etc. Found
+    # via `pixi run smoke`'s first real link+run of our own flang; see
+    # docs/10-status-log.md.
+    - if: linux
+      then:
+        - sysroot_${{ target_platform }} >=${{ c_stdlib_version }}
   run_exports:
     weak:
       - ${{ pin_subpackage('flang-zig', upper_bound='x.x') }}

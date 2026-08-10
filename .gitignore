@@ -56,3 +56,6 @@ packages/*/.pixi/
 .zig-global-cache/
 .zig-cache/
 *.conda
+
+packages/*/.pixi/
+

@@ -19,6 +19,20 @@ set "ZIG_CC_CMAKE=%ZIG_CC:\=/%"
 set "ZIG_CXX_CMAKE=%ZIG_CXX:\=/%"
 set "ZIG_AR_CMAKE=%ZIG_AR:\=/%"
 set "ZIG_RANLIB_CMAKE=%ZIG_RANLIB:\=/%"
+set "RECIPE_DIR_CMAKE=%RECIPE_DIR:\=/%"
+
+REM _LIBCPP_VERSION=1 for C compiles only: works around an upstream flang-rt
+REM bug where flang/include/flang/Common/float128.h's libc++ detection
+REM (`!defined(_LIBCPP_VERSION)`, meant to disable COMPLEX(16)/REAL(16)
+REM support under libc++, which doesn't fully support __float128) only works
+REM for C++ translation units. flang-rt/lib/runtime/complex-reduction.c is a
+REM C file hitting the same header; without this it wrongly enables
+REM float128 support and emits undefined-symbol references
+REM (_FortranACppSumComplex16 and friends) that the C++ side never defines.
+REM Found and fixed on linux-64 first; not yet verified on Windows. See the
+REM unix build.sh and docs/10-status-log.md for the full story.
+if not defined CFLAGS set "CFLAGS="
+set "CFLAGS=%CFLAGS% -D_LIBCPP_VERSION=1"
 
 set "FLANG_BIN=%BUILD_PREFIX%\Library\bin\flang.exe"
 if not exist "%FLANG_BIN%" (
@@ -67,6 +81,7 @@ cmake -G Ninja -S runtimes -B build %WIN_ABI_ARGS% %CROSS_ARGS% ^
   -DCMAKE_PREFIX_PATH="%LIBRARY_PREFIX%" ^
   -DCMAKE_CXX_STANDARD=17 ^
   -DCMAKE_MODULE_PATH="%SRC_DIR%/cmake/Modules" ^
+  -DCMAKE_PROJECT_INCLUDE="%RECIPE_DIR_CMAKE%/cmake-project-include.cmake" ^
   -DLLVM_DIR="%LIBRARY_LIB%/cmake/llvm" ^
   -DLLVM_CMAKE_DIR="%LIBRARY_LIB%/cmake/llvm" ^
   -DLLVM_ENABLE_RUNTIMES="flang-rt" ^

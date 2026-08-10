@@ -102,38 +102,50 @@ objdump -T <prefix>/bin/flang | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1
 
 ## Disk space on constrained or shared hosts
 
-An LLVM release build tree is tens of GB per stage (stage 1 alone was 53 GB and
-climbing before finishing, in the one build observed so far — see
-[10](10-status-log.md)). On a shared machine, or one with a small primary disk,
-that can exhaust it outright — this happened during initial bring-up: the
-primary disk filled to 100% with other tenants' data plus this build's own work
-tree, aborting the build with SIGABRT (exit 134), not a build failure.
+An LLVM release build tree is genuinely large — stage 1's `.pixi/bld` work
+directory reached **113 GB**, and the installed package itself is **42.7 GB**
+(9 GB compressed). On a shared machine, or one with a small primary disk, that
+can exhaust it outright — this happened during initial bring-up, aborting a
+build with SIGABRT (exit 134) purely from disk pressure, not a build failure.
+See [10](10-status-log.md) for the full incident.
 
-If you hit this, redirect the two things that actually consume space — the
-package/repodata cache and the per-package build work tree — to a roomier
-disk, without touching `pixi.toml`:
+**`pixi publish`'s `--build-dir` flag does NOT redirect the build backend's
+sandbox.** This was tried first and empirically does nothing for
+`pixi-build-rattler-build` builds: the `work/`, `bld/`, `artifacts-v0/` etc.
+subdirectories still land under `<package>/.pixi/bld/...` regardless of the
+flag. (The flag may do something for other backends or for `pixi build`
+directly against a `recipe.yaml` — not verified — but do not rely on it here.)
+`PIXI_CACHE_DIR` *does* work for the package/repodata download cache (verify
+via `pixi info --extended`'s "Cache dir" line) but that cache is small; it is
+not the disk-space problem.
+
+**What actually works: replace `<package>/.pixi` with a symlink** to a
+directory on the roomy disk, before running that package's first build. This
+is filesystem-level and tool-agnostic — it doesn't depend on any build tool
+cooperating with an env var or flag:
 
 ```bash
-PIXI_CACHE_DIR=/path/on/roomy/disk/pixi-cache \
-  pixi publish --path packages/llvm-zig --to ./channel \
-  --build-dir /path/on/roomy/disk/build
+mkdir -p /path/on/roomy/disk/pkg-pixi/llvm-zig
+mv packages/llvm-zig/.pixi /path/on/roomy/disk/pkg-pixi/llvm-zig   # if it already has data
+ln -s /path/on/roomy/disk/pkg-pixi/llvm-zig packages/llvm-zig/.pixi
 ```
 
-- `PIXI_CACHE_DIR` is verifiable immediately: `pixi info --extended` should
-  report the new path on the "Cache dir" line.
-- `--build-dir` keeps rattler-build's work tree (the actual compiled-object
-  directory) off the constrained disk. This is the dominant consumer.
-- `pixi config set -l detached-environments <path>` (writes to
-  `.pixi/config.toml`, gitignored except that one file) additionally relocates
-  `.pixi/envs` if those need moving too — smaller than the build tree, usually
-  not the bottleneck.
-- Do **not** bake a specific host's path into `pixi.toml` or a committed
-  `.pixi/config.toml` — it isn't portable. Set the env var per-session, or keep
-  a local, uncommitted `.pixi/config.toml` on that machine.
+For a package that hasn't been built yet, skip the `mv` and just create the
+symlink pointing at an empty directory before the first `pixi publish` /
+`pixi build` for that package. Do this **per package** — `packages/flang-zig/.pixi`
+and `packages/flang-rt-zig/.pixi` each need their own symlink, they do not
+share llvm-zig's.
+
+- Do **not** commit these symlinks or bake a specific host's path into
+  `pixi.toml` — `.pixi/` is already gitignored (except `.pixi/config.toml`),
+  so the symlink itself never enters version control; it's purely local
+  machine state.
 - **Do not delete other tenants' data** on a shared host to free space
   (`~/.cache/rattler`, other projects) without checking first — other sessions
   may depend on it. Only remove what you know is yours (your own project's
   `.pixi/bld`, your own scratch environments).
+- The root workspace's own `.pixi/` (dev tools: zig-probe, rattler-build) is
+  small (~1.5 GB) and not worth relocating.
 
 ## Cleaning up
 

@@ -3,13 +3,18 @@
 #   pixi run probe-win
 #
 # Windows counterpart of probe-zig-toolchain.sh. It is deliberately less
-# thorough: nobody has run it yet, and the questions it needs to answer are
-# different (see docs/05-platform-matrix.md, section "win-64").
+# thorough: the questions it needs to answer are different (see
+# docs/05-platform-matrix.md, section "win-64").
 #
 # The single most valuable thing this script does is print the -target triple
 # baked into the zig wrapper. Whether zig_win-64 targets the MSVC ABI or the
-# MinGW ABI decides whether the produced flang can interoperate with the rest
-# of conda-forge on Windows at all — and that question is currently OPEN.
+# MinGW ABI decides whether the produced flang can interoperate with R's
+# gnuwin32 world at all (docs/11-r-zig-integration.md).
+#
+# NOTE deliberately NO here-strings in this file: Windows PowerShell 5.1
+# failed to parse them here (content with C/C++ braces/&/<< was read as
+# PowerShell after the opener was not recognized), so all embedded sources
+# are arrays of single-quoted lines instead. Boring and robust.
 
 $ErrorActionPreference = "Continue"
 $script:failed = 0
@@ -34,70 +39,79 @@ if ($script:failed) {
 Note ("zig version: " + (& $env:ZIG version))
 
 Say "2. TARGET ABI (the open question for Windows)"
-# The wrapper is a generated .exe, but the conda-forge zig recipe derives the
-# target from the same mapping used on unix. Ask the compiler itself.
 & $env:ZIG_CC -v 2>&1 | Select-String -Pattern "Target:", "Thread model", "InstalledDir" | ForEach-Object { Note $_.ToString().Trim() }
-Note "Record whatever 'Target:' says in docs/10-status-log.md — it settles OPEN QUESTION W1."
+Note "Record whatever 'Target:' says in docs/10-status-log.md."
 
 Say "3. zig cc: compile + link C"
-Set-Content -Path "$work\t.c" -Value @"
-#include <stdio.h>
-int main(void) { printf("c-ok\n"); return 0; }
-"@
-& $env:ZIG_CC "$work\t.c" -o "$work\tc.exe" 2>&1 | Out-Null
+$srcC = @(
+    '#include <stdio.h>',
+    'int main(void) { printf("c-ok\n"); return 0; }'
+)
+Set-Content -Path "$work\t.c" -Value $srcC
+# --target=x86_64-windows-gnu: the target this project actually builds with
+# (build.bat passes it explicitly). zig's DEFAULT windows-msvc target needs an
+# installed Windows SDK ("failed to find libc installation: WindowsSdkNotFound"
+# on a machine without Visual Studio) - the MinGW target uses zig's bundled
+# CRT and needs nothing from the system.
+& $env:ZIG_CC --target=x86_64-windows-gnu "$work\t.c" -o "$work\tc.exe" 2>&1 | Out-Null
 if ((Test-Path "$work\tc.exe") -and ((& "$work\tc.exe") -eq "c-ok")) { Ok "C program compiled, linked and ran" }
 else { Bad "C program failed" }
 
 Say "4. zig c++: compile + link C++17"
-Set-Content -Path "$work\t.cpp" -Value @"
-#include <string>
-#include <vector>
-#include <iostream>
-#include <stdexcept>
-int main() {
-  std::vector<std::string> v{"cxx", "ok"};
-  try { throw std::runtime_error("x"); } catch (const std::exception&) {}
-  std::cout << v[0] << "-" << v[1] << "\n";
-  return 0;
-}
-"@
-& $env:ZIG_CXX -std=c++17 "$work\t.cpp" -o "$work\tcxx.exe" 2>&1 | Out-Null
+$srcCxx = @(
+    '#include <string>',
+    '#include <vector>',
+    '#include <iostream>',
+    '#include <stdexcept>',
+    'int main() {',
+    '  std::vector<std::string> v{"cxx", "ok"};',
+    '  try { throw std::runtime_error("x"); } catch (const std::exception&) {}',
+    '  std::cout << v[0] << "-" << v[1] << "\n";',
+    '  return 0;',
+    '}'
+)
+Set-Content -Path "$work\t.cpp" -Value $srcCxx
+& $env:ZIG_CXX --target=x86_64-windows-gnu -std=c++17 "$work\t.cpp" -o "$work\tcxx.exe" 2>&1 | Out-Null
 if ((Test-Path "$work\tcxx.exe") -and ((& "$work\tcxx.exe") -eq "cxx-ok")) { Ok "C++17 program compiled, linked and ran" }
 else { Bad "C++17 program failed" }
 
 Say "5. DLL dependencies of the C++ binary"
-# Tells us which CRT flavour we ended up on: ucrtbase.dll/vcruntime*.dll => MSVC
-# ABI; msvcrt.dll => MinGW ABI. Record the answer in the status log.
+# Which CRT flavour did we land on: ucrtbase.dll => UCRT; vcruntime*.dll
+# alongside it => MSVC ABI; msvcrt.dll => old MinGW ABI. Record the answer.
 if (Test-Path "$work\tcxx.exe") {
+    $objdump = Get-Command llvm-objdump -ErrorAction SilentlyContinue
     $dumpbin = Get-Command dumpbin -ErrorAction SilentlyContinue
-    if ($dumpbin) { & dumpbin /dependents "$work\tcxx.exe" | Select-String "\.dll" | ForEach-Object { Note $_.ToString().Trim() } }
-    else { Note "dumpbin not on PATH; run 'llvm-objdump -p tcxx.exe | findstr DLL' from an llvm env instead" }
+    if ($objdump) { & llvm-objdump -p "$work\tcxx.exe" 2>&1 | Select-String "DLL Name" | ForEach-Object { Note $_.ToString().Trim() } }
+    elseif ($dumpbin) { & dumpbin /dependents "$work\tcxx.exe" | Select-String "\.dll" | ForEach-Object { Note $_.ToString().Trim() } }
+    else { Note "no llvm-objdump/dumpbin on PATH; skipping DLL dependency dump" }
 }
 
 Say "6. CMake accepts the zig wrappers"
 New-Item -ItemType Directory -Path "$work\cm" -Force | Out-Null
-Set-Content -Path "$work\cm\CMakeLists.txt" -Value @"
-cmake_minimum_required(VERSION 3.28)
-project(zigprobe C CXX)
-set(CMAKE_CXX_STANDARD 17)
-add_library(probelib STATIC lib.cpp)
-add_executable(probeapp main.cpp)
-target_link_libraries(probeapp PRIVATE probelib)
-"@
-Set-Content -Path "$work\cm\lib.cpp" -Value 'include_placeholder'
-Set-Content -Path "$work\cm\lib.cpp" -Value @"
-#include <string>
-std::string greet() { return "cmake-ok"; }
-"@
-Set-Content -Path "$work\cm\main.cpp" -Value @"
-#include <string>
-#include <iostream>
-std::string greet();
-int main() { std::cout << greet() << "\n"; }
-"@
+$srcCMake = @(
+    'cmake_minimum_required(VERSION 3.28)',
+    'project(zigprobe C CXX)',
+    'set(CMAKE_CXX_STANDARD 17)',
+    'add_library(probelib STATIC lib.cpp)',
+    'add_executable(probeapp main.cpp)',
+    'target_link_libraries(probeapp PRIVATE probelib)'
+)
+Set-Content -Path "$work\cm\CMakeLists.txt" -Value $srcCMake
+$srcLib = @(
+    '#include <string>',
+    'std::string greet() { return "cmake-ok"; }'
+)
+Set-Content -Path "$work\cm\lib.cpp" -Value $srcLib
+$srcMain = @(
+    '#include <string>',
+    '#include <iostream>',
+    'std::string greet();',
+    'int main() { std::cout << greet() << "\n"; }'
+)
+Set-Content -Path "$work\cm\main.cpp" -Value $srcMain
 $cc = $env:ZIG_CC -replace '\\', '/'
 $cxx = $env:ZIG_CXX -replace '\\', '/'
-& cmake -G Ninja -S "$work\cm" -B "$work\cm\build" "-DCMAKE_C_COMPILER=$cc" "-DCMAKE_CXX_COMPILER=$cxx" -DCMAKE_BUILD_TYPE=Release 2>&1 | Out-Null
+& cmake -G Ninja -S "$work\cm" -B "$work\cm\build" "-DCMAKE_C_COMPILER=$cc" "-DCMAKE_CXX_COMPILER=$cxx" "-DCMAKE_C_COMPILER_TARGET=x86_64-windows-gnu" "-DCMAKE_CXX_COMPILER_TARGET=x86_64-windows-gnu" -DCMAKE_BUILD_TYPE=Release 2>&1 | Out-Null
 & cmake --build "$work\cm\build" 2>&1 | Out-Null
 if ((Test-Path "$work\cm\build\probeapp.exe") -and ((& "$work\cm\build\probeapp.exe") -eq "cmake-ok")) { Ok "CMake configure + build + run" }
 else { Bad "CMake integration failed" }

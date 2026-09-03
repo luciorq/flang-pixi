@@ -26,7 +26,15 @@ source:
   sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
 
 build:
-  number: 0
+  # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
+  # hash does NOT change when only build-dep content changes (the spec string
+  # is the hash input, not the resolved package), so without this bump the
+  # rebuilds collide with the old filenames ("already exists" skip) and the
+  # channel would keep pre-cross-capable binaries. Higher build number also
+  # makes the solver prefer these over any stale build 0 still in a channel.
+  # 2: rebuilt against the lld-less llvm-zig (build 1); lld-zig also
+  # reworked to a host-dep recipe with cross support + binary-only payload.
+  number: 2
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -40,7 +48,15 @@ build:
 
 requirements:
   build:
-    - ${{ compiler('zig') }}
+    # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
+    # instruction" on the build host; zig is natively a cross-compiler, so
+    # use the proven zig_win-64 — build scripts pass
+    # --target=aarch64-windows-gnu explicitly.
+    - if: target_platform == "win-arm64"
+      then:
+        - zig_win-64 0.16.*
+      else:
+        - ${{ compiler('zig') }}
     - ${{ stdlib('c') }}
     - cmake >=3.28
     - ninja
@@ -51,8 +67,34 @@ requirements:
     - llvm-zig ==${{ version }}
   host:
     - llvm-zig ==${{ version }}
+    # macOS only: the runtime dylib links conda-forge's libcxx dynamically
+    # (zig does not bundle libc++ statically on osx). See docs/10-status-log.md.
+    - if: osx
+      then:
+        - libcxx
   run:
-    - llvm-zig ==${{ version }}
+    # libcxx has no run_exports of its own — must be explicit (see flang-zig).
+    - if: osx
+      then:
+        - libcxx >=21
+  # flang-rt is pure link-time input (static archive + runtime .so) — nothing
+  # in it invokes llvm-zig tools at use time, and the lld-zig split's
+  # amputation test (docs/10-status-log.md, 2026-08-25) ran fine without any
+  # llvm-zig files present. llvm-zig's strong run_export would re-add the
+  # ~3 GiB dependency; consumers get their linker via flang-zig -> lld-zig.
+  ignore_run_exports:
+    from_package:
+      - llvm-zig
+    # vs2022 runtime chain: irrelevant for MinGW targets, breaks win-arm64
+    # solves (no ucrt in conda-forge's win-arm64 subdir).
+    by_name:
+      - ucrt
+      - vs2022_runtime
+      # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
+      # were guesses that missed): these landed in the first win-arm64 llvm
+      # package's depends. Meaningless for MinGW targets.
+      - vc
+      - vc14_runtime
   run_constraints:
     # Guard rail: the ancient PGI-derived `libflang` and conda-forge's
     # libstdc++-built `libflang-rt` are both ABI-incompatible with this one.

@@ -92,10 +92,11 @@ zig-probe = ["zig-probe"]
 # the next stage cannot resolve against. Stages 2 and 3 declare `../../channel`
 # as their first channel, so each stage sees the previous stage's output.
 build-llvm = { cmd = "pixi publish --path packages/llvm-zig --to ./channel", description = "Stage 1: build llvm-zig (llvm + mlir + clang + lld) with zig" }
+build-lld = { cmd = "pixi publish --path packages/lld-zig --to ./channel", description = "Stage 1.5: build standalone lld-zig against llvm-zig (flang's runtime linker)" }
 build-flang = { cmd = "pixi publish --path packages/flang-zig --to ./channel", description = "Stage 2: build flang-zig against llvm-zig" }
 build-flang-rt = { cmd = "pixi publish --path packages/flang-rt-zig --to ./channel", description = "Stage 3: build flang-rt-zig with the stage-2 flang" }
 
-build-all = { depends-on = ["build-llvm", "build-flang", "build-flang-rt"], description = "Run stages 1-3 in order" }
+build-all = { depends-on = ["build-llvm", "build-lld", "build-flang", "build-flang-rt"], description = "Run stages 1-3 in order" }
 
 # --- win-arm64: cross only, hosted on a win-64 machine ------------------------
 #
@@ -105,9 +106,10 @@ build-all = { depends-on = ["build-llvm", "build-flang", "build-flang-rt"], desc
 # for tblgen, and the win-64 stage 1 must have been built with AArch64 in
 # LLVM_TARGETS_TO_BUILD (see docs/05-platform-matrix.md).
 build-llvm-winarm = { cmd = "pixi publish --path packages/llvm-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 1 for win-arm64, cross-built from win-64" }
+build-lld-winarm = { cmd = "pixi publish --path packages/lld-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 1.5 for win-arm64, cross-built from win-64 (host-dep recipe, possible since llvm-zig build 1 dropped its bundled lld)" }
 build-flang-winarm = { cmd = "pixi publish --path packages/flang-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 2 for win-arm64, cross-built from win-64" }
 build-flang-rt-winarm = { cmd = "pixi publish --path packages/flang-rt-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 3 for win-arm64, cross-built from win-64" }
-build-all-winarm = { depends-on = ["build-llvm-winarm", "build-flang-winarm", "build-flang-rt-winarm"], description = "Cross-build all three stages for win-arm64 (run on a win-64 host, after build-all)" }
+build-all-winarm = { depends-on = ["build-llvm-winarm", "build-lld-winarm", "build-flang-winarm", "build-flang-rt-winarm"], description = "Cross-build all three stages for win-arm64 (run on a win-64 host, after build-all)" }
 
 # --- end-to-end checks --------------------------------------------------------
 smoke = { cmd = "bash scripts/smoke-test.sh", description = "Install flang from ./channel and compile tests/*.f90 with it" }

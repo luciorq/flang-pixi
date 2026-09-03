@@ -16,6 +16,12 @@
 #
 set -euo pipefail
 
+# macOS: both compilers here need the SDK at link time (flang honors SDKROOT
+# like clang; see smoke-test.sh for the failure mode without it).
+if [[ "$(uname -s)" == "Darwin" && -z "${SDKROOT:-}" ]] && command -v xcrun >/dev/null 2>&1; then
+  export SDKROOT="$(xcrun --show-sdk-path)"
+fi
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="${root}/.abi-probe"
 
@@ -40,13 +46,17 @@ echo "  zig cc: ${ZIG_CC}"
 # `-lflang_rt.runtime` fails to link. r-zig-pixi solves this by globbing for it
 # and passing an explicit -L (zigbuild/tools/configure-only.sh); we do exactly
 # the same, both to work and to stay faithful to how the consumer links.
-prefix="${CONDA_PREFIX:-}"
+# Search flang's OWN prefix first (derived from the resolved binary path —
+# FLANG may point into a different env than $CONDA_PREFIX, e.g. when mixing
+# the zig-probe env with the smoke env's flang), then $CONDA_PREFIX.
+flang_prefix="$(cd "$(dirname "$(command -v "${FLANG}")")/.." && pwd)"
 rt=""
-if [[ -n "${prefix}" ]]; then
+for prefix in "${flang_prefix}" "${CONDA_PREFIX:-}"; do
+  [[ -n "${prefix}" ]] || continue
   for f in "${prefix}"/lib/clang/*/lib/*/libflang_rt.runtime.a; do
-    [[ -f "${f}" ]] && rt="${f}" && break
+    [[ -f "${f}" ]] && rt="${f}" && break 2
   done
-fi
+done
 if [[ -z "${rt}" ]]; then
   echo "error: libflang_rt.runtime.a not found under ${prefix}/lib/clang — is the runtime installed?" >&2
   exit 1

@@ -71,6 +71,34 @@ flang that **emits MinGW-w64/UCRT objects**. Details and the mechanism are in
 - The Windows build scripts set `LLVM_DEFAULT_TARGET_TRIPLE=x86_64-w64-windows-gnu`,
   which is what makes the *produced* flang emit MinGW objects.
 
+#### Doesn't shared UCRT already make MSVC and MinGW compatible?
+
+Only at the C-runtime level, which is not where the problem is. Since both
+worlds link the same `ucrtbase.dll` (MSVC, Rtools42+, `gcc_impl_win-64`,
+zig's MinGW CRT), they share one heap and one stdio/locale/math — so calling
+an MSVC-built DLL through a **pure C API** from MinGW code genuinely works.
+UCRT does *not* cover:
+
+- **C++ ABI** — mangling (Itanium vs MSVC; symbols don't even resolve),
+  STL object layout, exception model, RTTI. The windows-gnu/windows-msvc
+  split lives entirely above the CRT. This is also why conda-forge's
+  MSVC-built LLVM DLLs are unusable from zig's libc++ world — same class of
+  incompatibility as libstdc++ vs libc++ on Linux (ADR-1).
+- **`long double`** — a C-level hole: MinGW x86_64 is 80-bit x87, MSVC is
+  64-bit. R uses `long double` accumulators, and it maps onto Fortran
+  extended-precision kinds.
+- **Object-level linking, which is how flang is actually consumed** — it
+  emits `.o` files and `libflang_rt.runtime.a` into R packages' MinGW link,
+  not calls across a DLL boundary. MSVC objects embed `/DEFAULTLIB`
+  directives for `vcruntime.lib` and reference MSVC helper symbols
+  (`__security_cookie`, `__chkstk`, MSVC EH personalities) the MinGW link
+  world cannot satisfy; conda-forge's flang even passes
+  `-fms-runtime-lib=dll` explicitly.
+
+So UCRT lets the two worlds *coexist in one process* across C DLL
+boundaries, but does not make an MSVC-targeted compiler's output linkable
+into R's MinGW build — that is what forces `x86_64-windows-gnu`.
+
 ---
 
 ## The interface r-zig-pixi consumes
@@ -121,6 +149,12 @@ flang-rt-zig = "*"
 ```
 
 plus adding this project's channel.
+
+Cost of that dependency pair (linux-64, measured 2026-08-25): **1.5 GiB**
+installed — flang-zig 880 MiB + lld-zig (the linker split out of llvm-zig;
+llvm-zig itself is build-time only and never enters the solve) + flang-rt +
+sysroot. Before the lld-zig split the closure was 3.9 GiB because flang-zig
+run-depended on all of llvm-zig for one binary, `ld.lld`.
 
 ---
 

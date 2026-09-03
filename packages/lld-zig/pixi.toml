@@ -1,0 +1,27 @@
+# Stage 1.5: lld-zig
+#
+# Standalone LLVM lld, built against the stage-1 llvm-zig tree. Exists so
+# flang-zig's RUNTIME dependency can be this 56 MiB linker instead of the
+# multi-GiB llvm-zig tree — proven sufficient by deleting every llvm-zig file
+# except bin/lld from a working flang env and watching everything still link
+# and run (docs/10-status-log.md, 2026-08-25). llvm-zig remains build-time
+# only for stages 2/3.
+#
+# Stage 1 must be published to ./channel first:
+#   pixi run build-llvm
+#   pixi run build-lld
+
+[workspace]
+channels = ["../../channel", "conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-arm64"]
+preview = ["pixi-build"]
+
+[package]
+name = "lld-zig"
+version = "22.1.8"
+
+[package.build]
+backend = { name = "pixi-build-rattler-build", version = "0.4.*", channels = ["conda-forge"] }
+
+[package.build.config]
+recipe = "recipe/recipe.yaml"

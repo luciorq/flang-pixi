@@ -27,8 +27,14 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
       DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_CPPFLAGS \
       CC CXX AR RANLIB LD NM STRIP 2>/dev/null || true
 
-export CFLAGS="-O2 -fPIC"
-export CXXFLAGS="-O2 -fPIC"
+# -g0: `zig cc`/`zig c++` emit full DWARF debug info by default, independent
+# of -O2/-DNDEBUG. Without this, flang-22/bbc/tco etc. balloon to multi-GB
+# each. See llvm-zig/recipe/build.sh for the full story and the confirming
+# test. This alone does not fully fix flang-zig's package size, since it
+# still statically links llvm-zig's .a archives, which carry their own
+# embedded debug info until llvm-zig itself is rebuilt with this flag too.
+export CFLAGS="-O2 -fPIC -g0"
+export CXXFLAGS="-O2 -fPIC -g0"
 
 FLANG_PARALLEL_COMPILE_JOBS="${FLANG_PARALLEL_COMPILE_JOBS:-2}"
 
@@ -90,6 +96,19 @@ if [[ "${build_platform}" != "${target_platform}" ]]; then
   )
 fi
 
+# macOS: zig links conda-forge's libcxx DYNAMICALLY (@rpath/libc++.1.dylib)
+# and injects no LC_RPATH — without this, flang-22/bbc/etc. abort at load.
+# Same story and fix as llvm-zig/recipe/build.sh; libcxx is a host dep on osx
+# in recipe.yaml. See docs/10-status-log.md (2026-08-25).
+if [[ "${target_platform}" == osx-* ]]; then
+  export LDFLAGS="-Wl,-rpath,${PREFIX}/lib"
+  CMAKE_EXTRA+=("-DCMAKE_INSTALL_RPATH=${PREFIX}/lib")
+  # macOS ulimit -n defaults to 256; zig opens every static archive of a link
+  # at once and flang-22's link list exceeds it (ProcessFdQuotaExceeded).
+  # Same fix as llvm-zig/recipe/build.sh.
+  ulimit -n 65536 2>/dev/null || ulimit -n 10240 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+fi
+
 # CMAKE_BUILD_WITH_INSTALL_RPATH=ON avoids a specific failure mode:
 # `packages/<pkg>/.pixi` may be a symlink to a roomier disk (see
 # docs/07-local-workflow.md, "Disk space on constrained or shared hosts").
@@ -138,6 +157,48 @@ cmake --install build
 
 test -x "${PREFIX}/bin/flang"
 
+MAJOR_VER="${PKG_VERSION%%.*}"
+
+# --- deduplicate flang-new -----------------------------------------------
+# LLVM's own install() logic produces bin/flang-new as a full, independent
+# copy of bin/flang-<major> — verified byte-identical via md5sum on this
+# build. Upstream never bothered fixing this because with shared linking the
+# driver binary is ~56 KB, so the duplication costs them nothing; statically
+# linked here, each copy is 1+ GB. Only collapse it if still identical for
+# THIS build (guards against a future flang version where they diverge —
+# silently symlinking mismatched binaries would be worse than leaving the
+# duplicate). See docs/10-status-log.md.
+flang_new="${PREFIX}/bin/flang-new"
+flang_versioned="${PREFIX}/bin/flang-${MAJOR_VER}"
+if [[ -f "${flang_new}" && -f "${flang_versioned}" ]] && cmp -s "${flang_new}" "${flang_versioned}"; then
+  rm -f "${flang_new}"
+  ln -s "$(basename "${flang_versioned}")" "${flang_new}"
+  echo "flang-new deduplicated -> $(basename "${flang_versioned}")"
+else
+  echo "WARNING: flang-new and flang-${MAJOR_VER} differ or are missing; not deduplicating" >&2
+fi
+
+# --- strip installed binaries ------------------------------------------------
+# -g0 (above) stops DWARF debug info from being generated in the first place,
+# but static linking still pulls a full ELF symbol table (.symtab/.strtab)
+# from every statically-linked object into every executable. Verified
+# directly: stripping flang-22 (already -g0'd) dropped it from 1.28 GB to
+# 147 MB, a further ~9x. Using llvm-zig's own llvm-strip (a run dependency,
+# so guaranteed present) rather than any host `strip`, matching ADR-1's
+# "no system tools" rule. --strip-all is safe here: nothing in bin/ is ever
+# dlopen()'d, and --strip-all does not touch .dynsym (needed to resolve
+# libc/libm/etc at load time) — only .symtab/.strtab, which nothing at
+# runtime reads. See docs/10-status-log.md for the measurement.
+STRIP_BIN="${PREFIX}/bin/llvm-strip"
+if [[ -x "${STRIP_BIN}" ]]; then
+  echo "== stripping installed executables with ${STRIP_BIN} =="
+  find "${PREFIX}/bin" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' f; do
+    "${STRIP_BIN}" --strip-all "${f}" 2>/dev/null || true
+  done
+else
+  echo "WARNING: llvm-strip not found at ${STRIP_BIN}, skipping strip pass" >&2
+fi
+
 # --- driver configuration file ----------------------------------------------
 # conda-forge's clangdev writes <target>-flang.cfg so the driver picks up the
 # environment's lib dir and (on Linux) the conda sysroot. Do the same, otherwise
@@ -149,7 +210,8 @@ test -x "${PREFIX}/bin/flang"
 # at RUNTIME — left to its defaults it looks for the system `ld` and for
 # GCC's crtbeginS.o/crtendS.o/libgcc, none of which exist anywhere in this
 # toolchain by design (ADR-1, no GCC at all). `-fuse-ld=lld` routes through
-# llvm-zig's own bundled ld.lld (already a runtime dependency) instead of
+# lld-zig's ld.lld (the runtime dependency; was llvm-zig's before the
+# lld-zig split, see docs/10-status-log.md 2026-08-25) instead of
 # whatever `ld` happens to be on the host's PATH. `--rtlib=compiler-rt`
 # makes the driver look for LLVM's own GCC-independent CRT objects and
 # builtins library, which flang-rt-zig (stage 3) builds alongside flang-rt —

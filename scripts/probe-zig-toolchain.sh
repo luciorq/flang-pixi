@@ -53,6 +53,15 @@ fi
 
 # --- 3. C++ ------------------------------------------------------------------
 say "3. zig c++: compile + link C++17"
+# macOS: zig links conda-forge's libcxx DYNAMICALLY (@rpath/libc++.1.dylib —
+# zig_impl_osx-* depends on libcxx; the opposite of Linux, where zig bundles
+# libc++ statically) and injects no LC_RPATH, so every C++ link needs an
+# explicit rpath to $CONDA_PREFIX/lib or the binary aborts at load. The build
+# scripts do the same. See docs/10-status-log.md (2026-08-25).
+cxx_link_flags=()
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  cxx_link_flags+=("-Wl,-rpath,${CONDA_PREFIX}/lib")
+fi
 cat > "${work}/t.cpp" <<'EOF'
 #include <string>
 #include <vector>
@@ -65,7 +74,7 @@ int main() {
   return 0;
 }
 EOF
-if "${ZIG_CXX}" -std=c++17 "${work}/t.cpp" -o "${work}/tcxx" >"${work}/cxx.log" 2>&1 \
+if "${ZIG_CXX}" -std=c++17 "${work}/t.cpp" ${cxx_link_flags[@]+"${cxx_link_flags[@]}"} -o "${work}/tcxx" >"${work}/cxx.log" 2>&1 \
    && [[ "$("${work}/tcxx")" == "cxx-ok" ]]; then
   ok "C++17 program compiled, linked and ran (exceptions included)"
 else
@@ -87,7 +96,13 @@ if [[ -x "${work}/tcxx" ]]; then
     note ">> If you ever see this, re-read docs/02-architecture-decisions.md:"
     note ">> the 'must rebuild LLVM ourselves' conclusion would need revisiting."
   elif printf '%s' "${deps}" | grep -qi 'libc++'; then
-    note ">> links libc++ dynamically"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      ok "links libc++ dynamically — conda-forge's libcxx package (expected on macOS)"
+      note ">> zig_impl_osx-* depends on libcxx; zig does NOT bundle it statically here."
+      note ">> Recipes must add libcxx to host deps and -Wl,-rpath,\$PREFIX/lib to links."
+    else
+      note ">> links libc++ dynamically"
+    fi
   else
     ok "no C++ runtime in the dependency list => zig's bundled libc++ is STATIC"
     note ">> This is the expected result, and it is why we cannot link against"
@@ -123,6 +138,7 @@ if cmake -G Ninja -S "${work}/cm" -B "${work}/cm/build" \
       -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
       -DCMAKE_AR="${ZIG_AR}" \
       -DCMAKE_RANLIB="${ZIG_RANLIB}" \
+      -DCMAKE_EXE_LINKER_FLAGS="${cxx_link_flags[*]-}" \
       -DCMAKE_BUILD_TYPE=Release >"${work}/cmake.log" 2>&1 \
    && cmake --build "${work}/cm/build" >>"${work}/cmake.log" 2>&1 \
    && [[ "$("${work}/cm/build/probeapp")" == "cmake-ok" ]]; then

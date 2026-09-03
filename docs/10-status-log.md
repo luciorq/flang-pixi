@@ -16,15 +16,16 @@ linux-64 ships nothing — it is the parity harness.
 
 | stage | linux-64 *(ref → DONE)* | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
 |---|---|---|---|---|---|---|
-| recipes render + resolve | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 0 · toolchain probe | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | n/a |
-| 1 · llvm-zig | ✅ 42.7 GiB, 54 min | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 2 · flang-zig | ✅ 16.87 GiB, 71 min | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 3 · flang-rt-zig | ✅ 239 MiB, 4 min *(incl. compiler-rt)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Q5 (libc++ leak) | ✅ resolved, no leak | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| smoke | ✅ **PASS, clean** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| ABI probe (zig cc ↔ flang) | ✅ **PASS, our own flang** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| r-zig `make check` lapack.R | not yet attempted | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| recipes render + resolve | ✅ | ✅ | ⬜ | ✅ | ⬜ | ✅ |
+| 0 · toolchain probe | ✅ | ✅ *(after Darwin rpath fix)* | ⬜ | ✅ *(windows-gnu target; MSVC default unusable w/o VS)* | ⬜ | n/a |
+| 1 · llvm-zig | ✅ 3.18 GiB *(build 4, lld-less)* | ✅ 2.47 GiB | ⬜ | ✅ | ⬜ | ✅ 3.70 GiB *(cross, unstripped)* |
+| 1.5 · lld-zig | ✅ 63 MiB *(slim, build 3)* | ✅ 49 MiB | ⬜ | ✅ | ⬜ | ✅ *(cross)* |
+| 2 · flang-zig | ✅ *(build 2)* | ✅ | ⬜ | ✅ 1.43 GiB *(MinGW ABI!)* | ⬜ | ✅ 1.26 GiB *(cross)* |
+| 3 · flang-rt-zig | ✅ *(build 2)* | ✅ | ⬜ | ✅ *(+ extracted zig MinGW CRT)* | ⬜ | ✅ 97.6 MiB *(+ aarch64 CRT + wcstold shim)* |
+| Q5 (libc++ leak) | ✅ resolved, no leak | n/a *(same libcxx as all of conda-forge osx)* | ⬜ | ⬜ | ⬜ | ⬜ |
+| smoke | ✅ **PASS** *(closure 1.3 GiB)* | ✅ **PASS** *(783 MB)* | ⬜ | ✅ **PASS, self-contained** | ⬜ | ⚠ **built, UNVALIDATED** *(no arm64 hardware)* |
+| ABI probe (zig cc ↔ flang) | ✅ **PASS, our own flang** | ✅ **PASS** | ⬜ | ⬜ next | ⬜ | ⬜ |
+| r-zig `make check` lapack.R | ✅ **PASS** *(+ contract test, via flang-zig-validation worktree)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ✅ pass · ❌ fail · ⬜ not attempted
 
@@ -53,6 +54,730 @@ yet run since it lives in a different repository).
 5. Once a target is built, actually take it to r-zig-pixi and run its own
    `make check` / `lapack.R` / contract tests — that is the real bar, not
    `pixi run smoke` here.
+
+---
+
+## 2026-08-25 (later) — lld-zig implemented (one packaging trap); osx-arm64 stage 1 in progress: four more zig-on-macOS bugs found and fixed
+
+### lld-zig package: implemented, one new trap found
+
+New `packages/lld-zig`: standalone `-S lld` build against llvm-zig, with
+llvm-zig as a **build** dep (host stays empty → no same-path clobbering with
+llvm-zig's own bundled lld; trade-off: no cross-compilation for this recipe,
+acceptable since only win-arm64 would care and it is last in priority).
+
+**Trap: the first build published a package with ZERO content files** (15.9
+KiB, metadata only) — and its test still passed. Root cause: llvm-zig's
+STRONG `run_exports` means that even as a *build* dep it injects itself into
+the HOST env (that is what strong exports do). lld's `cmake --install` then
+overwrote llvm-zig-owned paths (`bin/lld`, `liblld*.a`, `include/lld`),
+rattler-build attributed every file to the host package and packaged
+nothing; the test passed because the same export had put llvm-zig's own
+`bin/lld` into the test env. **Fix:** `ignore_run_exports: from_package:
+[llvm-zig]` in lld-zig's recipe. The empty `.conda` + its repodata entry
+were purged from the channel before republishing (same-hash "already
+exists" trap would otherwise have kept the empty one). Second build:
+31 content files, 289.64 MiB installed, 97 MB compressed. (Follow-up,
+not blocking: ~230 MiB of that is `liblld*.a` + headers nobody consumes
+at runtime — bin/ alone would do.)
+
+flang-zig's recipe now has `run: lld-zig ==version` (was `llvm-zig ==`) +
+`ignore_run_exports` on llvm-zig; flang-rt-zig's run deps emptied the same
+way. Both rebuilds get NEW build hashes (host/run-dep changes) — the one
+time the "already exists" trap does not fire.
+
+### osx-arm64 stage 1 (omicron): four zig-on-macOS bugs, all found by building
+
+All four fixed in `llvm-zig/recipe/build.sh`'s osx block; validated by
+resume-in-place on the surviving work dir (the established pattern):
+
+1. **`-Wl,-exported_symbols_list,<file>` breaks zig's driver** — the parse
+   failure disables zig's own libSystem/-syslibroot injection and the link
+   dies with "library not found for -lSystem" + undefined `_malloc`/`_atoi`.
+   Minimal-repro bisect confirmed the flag, alone, flips a working
+   `-dynamiclib` link to broken. Only three targets use export files (libLTO,
+   libRemarks, libclang), all via one AddLLVM.cmake line. **Fix:** sed to the
+   `=` spelling, which zig parses cleanly — measured consequence: the export
+   list is then silently NOT applied (verified with `nm`: the dylib
+   over-exports). Benign here: nothing consumes these dylibs from our
+   packages (ADR-2, static linking).
+2. **zig hard-rejects ld64's `-sectcreate`** ("unsupported linker arg"),
+   used by clang/tools/driver to embed an Info.plist metadata section in
+   `bin/clang`. Cosmetic; **fix:** sed the flag out of
+   `clang/tools/driver/CMakeLists.txt` — careful, in LLVM 22 the flag is a
+   `target_link_libraries(... PRIVATE "...")` item whose line carries the
+   closing paren, and an EMPTY-STRING item is invalid CMake — the
+   replacement must leave a bare `)`.
+3. **macOS's default `ulimit -n` 256 vs ~2000-object dylib links** —
+   `libclang-cpp.dylib` fails with zig's `ProcessFdQuotaExceeded`.
+   **Fix:** `ulimit -n 65536` in the osx block.
+4. **dsymutil requires Apple's CoreFoundation framework headers**, and
+   zig's clang adds no SDK framework search paths. dsymutil is irrelevant
+   to flang; **fix:** `LLVM_TOOL_DSYMUTIL_BUILD=OFF` (same
+   disable-the-irrelevant-tool pattern as llvm-exegesis on Linux).
+
+Meta-observation: bugs 1, 2 and 4 are all one family — zig's driver is not
+a complete ld64 driver; Apple-specific link features (symbol-export files,
+section creation, frameworks) are where it diverges from real clang. Expect
+stage 2/3 on macOS to hit the same family (flang.cfg content, compiler-rt's
+CRT being ELF-only).
+
+### 2026-08-29 — win-arm64 DELIVERED: all four packages cross-built and published
+
+`channel/win-arm64/` now holds the complete chain, cross-built from kappa:
+llvm-zig (3.70 GiB, unstripped), lld-zig, flang-zig (1.26 GiB) and
+flang-rt-zig (97.6 MiB incl. the extracted **aarch64** MinGW CRT with the
+wcstold shim baked in). This is, to our knowledge, the first MinGW-ABI
+arm64-Windows flang anywhere. **Built but UNVALIDATED** — no arm64 Windows
+hardware available; validation procedure when one exists: pixi env from
+this channel with flang-zig + flang-rt-zig, compile and run
+`tests/hello.f90` and `tests/modules.f90`.
+
+Getting there required abandoning `pixi publish` for cross targets and a
+run of seven distinct discoveries:
+
+a. **`pixi publish` panics on any cross-target publish**
+   (`pinned_source.rs:553: expected valid URL`, deterministic on 0.76 and
+   0.77, all flag combinations) — worth filing upstream. Bypass: drive
+   **standalone rattler-build** directly (`rb-arm.bat` wrapper; conda-forge
+   rattler-build 0.74 via pixi global), which also indexes its output dir,
+   making manual channel publishing a plain file copy.
+b. **conda-forge `zig_win-arm64`'s zig binary dies with "Illegal
+   instruction" on the x64 build host** — report to zig-feedstock. Since
+   zig is natively a cross-compiler, the recipes now use `zig_win-64` for
+   the win-arm64 target with `--target=aarch64-windows-gnu`.
+c. **zig's aarch64-windows-gnu CRT lacks `wcstold`** (the x64 flavor has
+   it), sinking every executable link via LLVM's Support code. On
+   arm64-Windows `long double` *is* `double`, so a forwarding shim to
+   `wcstod` is exactly correct — compiled per-build and injected via
+   `CMAKE_EXE/SHARED_LINKER_FLAGS` in all cross branches, AND baked into
+   the extracted end-user `libmsvcrt.a`. Report to zig.
+d. MLIR's ExecutionEngine runner DLLs (`libmlir_float16_utils.dll` et al.)
+   need more CRT than the arm flavor offers and flang never uses them —
+   `-DMLIR_ENABLE_EXECUTION_ENGINE=OFF` on the cross leg.
+e. **Foreign-arch `llvm-strip` poisons the script's exit code**: the
+   per-file `2>nul` tolerance hides output but the final ERRORLEVEL fails
+   the whole script *after* a successful build — `ver >nul` reset at
+   script end. ARM binaries ship unstripped for now (cross-strip via the
+   native BUILD_PREFIX llvm-strip is a queued improvement).
+f. **pixi-build reports `build_platform == target_platform` even for
+   cross builds** — both in script env vars and recipe selectors — so
+   `build_platform != target_platform` conditions silently never fire.
+   Recipes and scripts now condition on the concrete target
+   (`target_platform == "win-arm64"`). Also: cmd delayed expansion is
+   unreliable in packaged build scripts — all cross blocks are goto-style
+   straight-line code.
+g. Operational: `schtasks /tr` has a 261-char limit (wrapper .bat);
+   kappa's disk filled mid-build (447 MB free!) from accumulated work
+   trees — periodic purges keeping one src_cache seed are now part of the
+   playbook.
+
+### 2026-08-28 — Option A: llvm-zig sheds lld, lld-zig goes host-dep + slim; the four-round stale-state saga
+
+User decisions: implement Option A (make lld-zig cross-buildable so win-arm64
+— a stated project goal, R on win-arm64 — becomes possible) plus the lld-zig
+size slimming. Final state:
+
+- **llvm-zig build 4**: lld project dropped entirely (`LLVM_ENABLE_PROJECTS
+  = clang;mlir`); 3.18 GiB linux / 2.47 GiB osx installed, no lld anywhere.
+- **lld-zig build 3**: llvm-zig moved build→host (host deps resolve for the
+  TARGET platform — the thing that makes cross builds produce a target-arch
+  linker), a cross branch (native tblgen from build deps), and a
+  binary-only payload with the driver aliases deduplicated to symlinks:
+  **63 MiB linux / 49 MiB osx** (was 378 MiB as accidental full copies; the
+  earlier 289 MiB shipped liblld*.a + headers nobody links at runtime).
+  Windows keeps separate PE copies (~300 MiB) — no safe dedup there yet.
+- Runtime closures: **783 MB osx-arm64, 1.3 GiB linux-64** (was 1.5 GiB).
+- flang-zig/flang-rt-zig at build 2, rebuilt against the lld-less llvm.
+- Unix smokes PASS on the new generation.
+
+**The saga worth remembering — it took FOUR llvm rebuilds to actually drop
+lld, because reused build dirs preserve three layers of stale state:**
+
+1. *CMake cache*: passing a new `-DLLVM_ENABLE_PROJECTS` does not reset the
+   cached per-tool enables; lld kept configuring. (Fix attempt: explicit
+   `-DLLVM_TOOL_LLD_BUILD=OFF`.)
+2. *Build tree*: even with the flag, stale generated state can resurrect
+   components. (Fix attempt: `rm -rf build` pre-configure — free, since
+   pixi's source re-copy forces full recompiles anyway.)
+3. **Host prefix — the insidious one**: `$PREFIX` persists across runs in
+   the same build dir, so files installed by PREVIOUS generations remain
+   and get PACKAGED even when the current build never produces them.
+   bin/lld survived the projects change, the tool flag, AND the build-tree
+   deletion this way — ninja built 6,673 targets without lld while the
+   package still listed a 63 MiB bin/lld. The tell: package listings that
+   contain files the build log never mentions building. (Fix: explicitly
+   purge the dropped component's files from `$PREFIX` pre-configure.)
+
+All three defenses now live in llvm-zig's build scripts. General lesson
+for this backend: **a reused build dir is never clean — treat CMake cache,
+build tree, and host prefix as all potentially poisoned** when a component
+is removed from a recipe.
+
+kappa win-64 chain and the first win-arm64 cross chain in flight — results
+in the next entry.
+
+### 2026-08-27 — Windows LINKS AND RUNS (zig-CRT extraction); backends flipped to X86;AArch64; build-number bump ends the "already exists" era
+
+**Windows smoke passes.** The MinGW-CRT frontier is closed, per the user's
+decision to stay self-contained (no `gcc_impl_win-64` dependency):
+
+- `packages/flang-rt-zig/recipe/extract-zig-crt.ps1` runs one verbose
+  `zig cc --target=x86_64-windows-gnu` link and harvests every CRT artifact
+  zig materializes into its cache (parsed off the printed `lld-link` line),
+  into `Library\x86_64-w64-mingw32\lib` with the GNU names flang's driver
+  emits: `crt2.obj→crt2.o`, `libmingw32.lib→libmingw32.a`,
+  `compiler_rt.lib→libgcc.a` (zig's libgcc replacement), zigc + the UCRT
+  `api-ms-win-crt-*` import libs merged into `libmsvcrt.a` (llvm-ar MRI
+  ADDLIB), system import libs as `lib<name>.a`, empty archives for
+  `libgcc_eh/libmoldname/libmingwex` (SEH needs no gcc_eh; modern mingw-w64
+  merged the other two), empty objects for `crtbegin.o/crtend.o` (zig links
+  without them; validated).
+- `flang-zig`'s build.bat now writes `Library\bin\flang.cfg` with
+  `-fuse-ld=lld` (the driver otherwise invokes bare `ld`); `ld.lld.exe`
+  comes from lld-zig, already flang's run dep.
+- flang-rt's Windows multi-flavor `libflang_rt.runtime.static.a` is aliased
+  to the plain `libflang_rt.runtime.a` the driver links.
+
+All three pieces were validated **by hand first** in a clean solver env
+(`hello.f90` AND `modules.f90` compile, link, run — correct output), then
+baked into the recipes. PowerShell extraction gotchas, for the record:
+`$ErrorActionPreference=Stop` turns native stderr into fatal errors;
+Set-Content sneaks BOMs that break llvm-ar's MRI parser (use
+`[IO.File]::WriteAllLines` with BOM-free UTF8 + cmd stdin redirect); and
+`Out-String` wraps long native output at console width, destroying
+parseable link lines (capture to a file via cmd redirect instead).
+
+**Backends flipped** (user request): `llvm_targets_to_build` is now
+`"X86;AArch64"` on every platform — each flang can emit code for both
+arches, unlocking the cross paths (win-arm64 mandatory-cross first;
+linux-aarch64 / osx-64 hardware-optional). Gamma's llvm went from 6659 to
+6805 ninja targets; rebuild chains ran on all three machines.
+
+**The "already exists" class is now solved properly**: rattler's
+build-string hash inputs are variant values + dependency *specs* — not
+resolved packages, not script content. So content-only rebuilds (new llvm
+behind the same spec) collide with old filenames and get silently skipped.
+The fix used all session — manual channel recovery — is replaced by the
+boring correct one: **bump `build.number`** (lld/flang/flang-rt now build
+1). New filenames, clean publishes, and the solver automatically prefers
+the higher build number over any stale build 0.
+
+Two more environment lessons: Windows scheduled tasks created without
+`/ru` run on the interactive token and **die with CONTROL_C_EXIT when that
+user's session ends** (two mysterious mid-build deaths on shared kappa) —
+`/ru SYSTEM /rl HIGHEST` with an explicit PATH in the command (SYSTEM lacks
+pixi) is the durable pattern. And superseded same-version packages left in
+a channel make build-env solves ambiguous — remove them promptly.
+
+**Validation state after the flip**: gamma and omicron chains fully
+republished as build 1, smokes PASS on both; the r-zig-pixi regression
+gate re-run on gamma against the new flang — **R rebuilds, `make check`
+passes, `lapack.R` OK**.
+
+**Kappa chain completed too** (evening): llvm 4.53 GiB cross-capable,
+then lld/flang/flang-rt as build 1. One last extraction bug found by the
+packaged build: with `ZIG_GLOBAL_CACHE_DIR` under the CWD (as build.bat
+sets it), zig prints **relative** artifact paths
+(`.zig-global-cache\o\...`) and the absolute-only path regex harvested
+nothing — the first packaged flang-rt shipped empty stubs while the
+interactive validation (different CWD → absolute paths) had worked.
+Fixed with tokenize-and-resolve parsing. Also: SYSTEM-context tasks need
+`C:\Windows\System32\WindowsPowerShell\v1.0` in PATH explicitly, or
+every `powershell` step in a build.bat silently no-ops (this resurrected
+the llvm-config bug once before it was caught; llvm-zig's build.bat now
+hard-fails if the filter can't run).
+
+**Final validation: a completely clean Windows env solved from the
+channel — `pixi add flang-zig flang-rt-zig`, zero hand patches — compiles,
+links and runs both test programs.** The win-64 toolchain is
+self-contained end to end.
+
+### win-64 COMPLETE (packages): full chain published; smoke blocked on the known MinGW-CRT frontier (2026-08-26)
+
+All four packages now exist for win-64 in `channel/win-64/` — **a MinGW-ABI
+flang.exe exists**, which was this leg's reason to exist:
+
+| package | size | note |
+|---|---|---|
+| llvm-zig | 4.18 GiB installed, 6369 files | 6659/6659 targets clean |
+| lld-zig | 276 MiB, 31 files | |
+| flang-zig | 1.41 GiB, 439 files | flang.exe --version + -emit-llvm test passed |
+| flang-rt-zig | 93.76 MiB, 35 files | static-only (upstream: no shared flang-rt on Windows) |
+
+Three recipe/toolchain bugs found by building (beyond the earlier
+CMAKE_ASM_FLAGS one):
+
+- **zig's wrapper .exe strips embedded quotes when re-spawning zig**:
+  `-DCMAKE_CFG_INTDIR="$<CONFIG>"` reached the compiler as a bare
+  identifier ("use of undeclared identifier 'Release'"). Fixed by removing
+  llvm-config's define (its uses are `#if defined`-guarded).
+- **Backslash `%SRC_DIR%` in CMAKE_MODULE_PATH** → CMake "Invalid character
+  escape '\U'" at try_compile. Forward-slash everything CMake sees
+  (`SRC_DIR_CMAKE` variable in both flang build.bat files).
+- **Upstream flang bug for MinGW**: RTBuilder.h's getModel specialization
+  for the memcpy-style fptr (`unsigned __int64`) is `#ifdef _MSC_VER`-only,
+  but MinGW is LLP64 too → undefined
+  `getModel<...unsigned long long>` at the first .exe link. Patched via
+  `packages/flang-zig/recipe/patch-rtbuilder.ps1` (spell it
+  `unsigned long long`, widen guard to `_WIN64`). **Worth reporting
+  upstream** — nobody builds MinGW flang, which is how this survives.
+
+Windows-environment lessons (all needed to get any build running at all):
+github.com is DNS-blocked on kappa → seed rattler's per-build-dir
+`src_cache` (tarball + `.metadata` json + `_extracted/`; and note the
+build-dir hash MOVES when build-deps change, e.g. flang-rt's dir changed
+when flang-zig published — re-seed the current dir); symlink privilege
+(os error 1314) → Developer Mode + `schtasks /rl HIGHEST` (Start-Process
+detachment silently fails; schtasks one-shots are the reliable pattern,
+with IgnoreNew semantics — wait for Running→Ready before re-triggering);
+logs arrive CP437-garbled over ssh (scp + iconv) and flush in bursts;
+PowerShell 5.1 here-strings are unusable for embedded C code.
+
+### The smoke-equivalent: compile works, link is the next frontier
+
+`flang hello.f90` in a fresh solver env: **Fortran → object works**
+(`-fc1 -triple x86_64-w64-windows-gnu -emit-obj` succeeds). The LINK fails
+exactly as docs/11 anticipated, now with precise data. The MinGW driver
+invokes bare **`ld`** (GNU ld, not in the env — needs `-fuse-ld=lld`
+wiring plus lld's `ld.lld` MinGW flavor) and demands the full GNU MinGW
+link world: `crt2.o crtbegin.o`, `-lmingw32 -lgcc -lgcc_eh -lmoldname
+-lmingwex -lmsvcrt`, searched under `Library/x86_64-w64-mingw32/lib` —
+none of which exist in the env (zig's bundled MinGW CRT is private to
+zig). **Decision needed** (deliberately not made unilaterally): (a) run-dep
+on conda-forge's MinGW toolchain libs (`gcc_impl_win-64` world — attractive
+because r-zig-pixi already ships it for gfortran, and the driver's search
+paths match its layout), or (b) extract/ship zig's CRT pieces in
+flang-rt-zig (self-contained, mirrors the linux compiler-rt approach, more
+engineering). Either way a `flang.cfg` with `-fuse-ld=lld` is needed on
+Windows (build.bat writes no cfg today).
+
+### win-64 stage 1 compiling: past 1200/6659 targets, zero failures (2026-08-26)
+
+The first-ever Windows build of this project is deep in compilation. Getting
+there took four Windows-environment fixes and one real recipe bug — all
+found by running, none by guessing:
+
+- **kappa cannot resolve github.com** (DNS-filtered network; conda CDN
+  works). Worked around by seeding rattler-build's per-build-dir source
+  cache (`packages/<pkg>/.pixi/bld/<pkg>/<hash>/output/src_cache/`) with
+  the tarball scp'd from gamma's cache + its `.metadata/<hash>.json` + a
+  locally-extracted `<hash>_extracted/` dir (`tar --strip-components=1` on
+  kappa — the tarball alone is NOT enough; the metadata's `extracted_path`
+  must exist or the work dir silently gets no source). NOTE: every new
+  build-dir hash needs the cache re-seeded (robocopy from an old dir).
+- **os error 1314 (symlink privilege)** during source copy: fixed by
+  enabling Developer Mode (registry) and recreating the launcher as an
+  elevated scheduled task (`schtasks /rl HIGHEST`). Plain `Start-Process`
+  detachment silently failed; **`schtasks` one-shot tasks are the reliable
+  Windows detachment pattern** for long builds over ssh.
+- Windows console output arrives CP437-garbled over ssh — scp the log to
+  gamma and `iconv -f CP437` to read it.
+- **vs2022 activation's Windows-SDK registry probing fails harmlessly** on
+  a VS-less machine ("I'm not sure if things will work, but let's
+  try...") — W2 resolved in practice: the MinGW-target build needs nothing
+  from MSVC, the stdlib('c') activation is inert noise here.
+- **Real recipe bug: `CMAKE_ASM_COMPILER_TARGET` does not put `--target`
+  on `.S` assembly compile lines.** First casualty: LLVM's
+  `blake3_sse2_x86-64_windows_gnu.S` at target 183 — zig fell back to its
+  windows-msvc default and died with `WindowsSdkNotFound`. Fix:
+  `-DCMAKE_ASM_FLAGS=--target=x86_64-windows-gnu` (a plain flag always
+  reaches the command line) in all three build.bat files + cross branches.
+
+What the run has already proven: zig activation, cmake configure with the
+zig wrappers, ninja, and C/C++/ASM compilation with the windows-gnu target
+all work on Windows. The link steps and the packaging half are still ahead.
+
+### win-64 (host `kappa`, Windows 11, 12 cores): stage-0 probe PASSES
+
+The dormant Windows leg is now real. Getting the probe to run surfaced
+three Windows-tooling lessons before any compiler question:
+
+- **Windows PowerShell 5.1 failed to parse the probe's here-strings**
+  (content with C/C++ braces/`&`/`<<` got read as PowerShell; CRLF
+  conversion did NOT fix it). Rewrote `probe-zig-toolchain.ps1` to build
+  embedded sources as arrays of single-quoted lines — boring and robust.
+  `.gitattributes` now forces `eol=crlf` for `*.ps1`/`*.bat` regardless.
+- **W1 confirmed on real hardware**: `zig cc -v` reports
+  `Target: x86_64-unknown-windows-msvc` — the MSVC default. On a machine
+  without Visual Studio it is not even usable: plain `zig cc t.c` dies
+  with `failed to find libc installation: WindowsSdkNotFound`.
+- **`--target=x86_64-windows-gnu` works out of the box**: C and C++17
+  compile, link and run with zig's bundled MinGW CRT, no Windows SDK, no
+  VS. CMake integration passes with `CMAKE_{C,CXX}_COMPILER_TARGET` set.
+  The probe now tests this target explicitly, since it is the one every
+  build.bat passes.
+
+All six probe checks green. First `pixi run build-llvm` attempt on
+Windows started — expect the unverified build.bat scripts and the W2
+(`stdlib('c')` → vs2022) question to bite next.
+
+### osx-arm64 COMPLETE: all four packages published, smoke PASSES (night update)
+
+Stage 3 and the first end-to-end run surfaced macOS bugs 8–10:
+
+8. **`COMPILER_RT_BUILD_CTX_PROFILE` was missing from the OFF list** — a
+   newer compiler-rt component that defaults ON and drags `sanitizer_common`
+   in, which needs Apple SDK headers zig doesn't expose (`asl.h`,
+   `sys/timeb.h`). Now OFF everywhere. Also added the Darwin twin of the
+   CRT relocation block (`lib/darwin/libclang_rt.osx.a` → resource dir;
+   Mach-O has no crtbegin/crtend, so no CRT objects on this platform).
+9. **conda-forge's `libcxx` has NO run_exports on itself** — a host dep
+   alone adds nothing to `run:`, so every binary aborted at load with
+   "Library not loaded: @rpath/libc++.1.dylib" in a fresh env. All four
+   recipes now carry an explicit osx-gated `libcxx >=21` run dep; the
+   already-published osx packages' repodata was hand-patched (their
+   internal `info/index.json` stays stale until the next real rebuild —
+   same class of fix as the "already exists" recoveries).
+10. **flang's Darwin driver needs `SDKROOT`** to find libSystem at link
+   time ("ld: library 'System' not found"), same as clang. It links via
+   Apple's `ld` from the Command Line Tools (fine — CLT is a macOS
+   developer prerequisite anyway). `smoke-test.sh` now auto-resolves
+   SDKROOT via `xcrun` on Darwin; r-zig-pixi integration must ensure the
+   same (it already manages SDK discovery for zig cc).
+
+With those three: `pixi run smoke` on omicron **PASSES** self-contained —
+`hello: OK`, `modules: OK`, compiled/linked/run by our own osx-arm64 flang
+against a solver-clean env. **The highest-value platform of the whole
+project now works end to end.** Next gate there: the ABI probe, then
+r-zig-pixi's macOS validation (removing the gfortran `-O1` cap is the
+prize).
+
+### osx-arm64 stages 1, 1.5, 2 all published (evening update)
+
+After the six macOS fixes, the clean packaged builds on omicron went
+straight through: `llvm-zig-22.1.8-zig_aa435b6_0.conda` (596 MB compressed,
+vs linux's 740 MiB), `lld-zig-22.1.8-zig_d40d935_0.conda` (31 content
+files, 220 MiB installed — the ignore_run_exports fix held on the second
+platform), and `flang-zig-22.1.8-zig_01c9890_0.conda` — all in
+`channel/osx-arm64/`. One more stage-2 lesson first: **the fd-limit fix
+must live in EVERY package's osx block, not just llvm-zig's** — flang-22's
+link list also exceeds macOS's 256-fd default (`ProcessFdQuotaExceeded`),
+so the `ulimit -n 65536` block is now in all four build.sh files. Stage 3
+(flang-rt) in flight; the ELF-only `COMPILER_RT_BUILD_CRT=ON` is the
+predicted next failure point there.
+
+### r-zig-pixi validation (linux-64): R BUILDS with flang-zig
+
+In a git worktree of `../r-zig-pixi` (branch `flang-zig-validation`, user's
+WIP untouched) with `flang-zig`/`flang-rt-zig` swapped in and our channel
+first: **`pixi run build` completes — "zig-built R OK: R version 4.6.1"**.
+The zig-built R, with every Fortran object compiled by our flang, builds
+and passes its own verify step. `pixi run check` (R's regression suite,
+incl. the `lapack.R` that catches the gfortran miscompile class) launched
+next — result in the following entry.
+
+Two validation-run notes: (1) a fresh conda-forge solve pulls pango 1.58 +
+the newly split `libharfbuzz` 14.3, which **breaks R 4.6.1's cairo module
+compile** (`hb.h` include churn) — r-zig-pixi's own next lock refresh will
+hit this; the validation pinned `pango 1.56.*`/`harfbuzz 14.2.*` to match
+its current lock. Unrelated to flang. (2) zig build's parallel failure
+reporting can list innocent in-flight steps as "failed command" — a
+reported flang failure on `dlamch.f` turned out to reproduce cleanly (exit
+0) when run manually; always re-run a "failed command" in isolation before
+blaming it.
+
+### lld-swap verified on linux-64: runtime closure 3.9 GiB → 1.5 GiB
+
+flang-zig and flang-rt-zig rebuilt with the new run deps; **both hit the
+"already exists" trap again** — extending the earlier lesson: run-dep-only
+recipe changes do NOT change the build-string hash either (it really is
+host/build deps + variant inputs only). Manual recovery both times, with
+the fresh packages' own `info/index.json` supplying the new `depends`
+(flang-zig: `lld-zig ==22.1.8` + sysroot, **no llvm-zig**; flang-rt-zig:
+only `__glibc`, constrains preserved).
+
+Fresh `pixi run smoke`: **PASS**, and the solved env now contains
+flang-zig + flang-rt-zig + lld-zig + sysroot + kernel-headers + tzdata —
+**no llvm-zig anywhere**. Measured: **1.5 GiB** installed (was 3.9 GiB
+with llvm-zig as flang's run dep). Remaining slimming (not done): lld-zig
+ships 289 MiB of which ~230 MiB is `liblld*.a` + headers nobody links at
+runtime; llvm-zig also still ships its own now-redundant `bin/lld` copy.
+Both are cleanup-on-next-rebuild items, not blockers.
+
+---
+
+## 2026-08-25 — lld-zig split proven viable; osx-arm64 probe run: macOS inverts ADR-1's libc++ story
+
+### lld-zig split: decisive YES
+
+Question from the size work: can `flang-zig`'s 2.98 GiB `llvm-zig` run
+dependency be replaced by just lld? **Proven empirically**: in a copy of the
+smoke env, deleted all 6,369 `llvm-zig`-owned files except `bin/lld` (56 MiB
+stripped) + the `bin/ld.lld` symlink — flang still compiles, links
+executables **and** shared libraries (the R-package mode), and the outputs
+run correctly. The link line (`flang -v`) confirms `ld.lld` is the *only*
+llvm-zig tool invoked at use time; every other input comes from flang-zig,
+flang-rt-zig, or the sysroot.
+
+Runtime closure math: flang-zig 880 MiB + lld 56 MiB + flang-rt-zig 38 MiB +
+sysroot ≈ **1.2 GiB**, vs 3.9 GiB with the full llvm-zig dependency.
+Implementation (a `packages/lld-zig` recipe + flang-zig run-dep swap with
+`ignore_run_exports` on llvm-zig's strong export) is queued; note the
+flang-zig rebuild for it will get a **new build string** (host-dep change),
+so for once the "already exists" trap will not fire.
+
+### osx-arm64 (host `omicron`, M2-class, 10 cores/32 GiB): stage-0 probe run
+
+`pixi run probe`: **5 of 6 checks pass, check 5 (CMake integration) FAILS**
+— and the root cause is a genuine platform-story inversion, exactly the kind
+of macOS surprise the R1 notes predicted:
+
+**On osx-arm64, conda-forge's zig links libc++ *dynamically*, against
+conda-forge's own `libcxx` package** (`zig_impl_osx-arm64` depends on
+`libcxx 21.*`; produced binaries reference `@rpath/libc++.1.dylib`) — the
+opposite of Linux, where zig statically bundles its own libc++ (the fact
+ADR-1 is built on). Worse, zig injects **no `LC_RPATH` whatsoever**, so
+*every* C++ binary it links crashes at load with `Library not loaded:
+@rpath/libc++.1.dylib` unless the link adds one. Verified both ways on
+omicron: bare `$ZIG_CXX t.cpp -o t` → crash; adding
+`-Wl,-rpath,$CONDA_PREFIX/lib` → runs, `otool -l` shows the LC_RPATH.
+
+Consequences for the recipes (not yet applied as of this entry):
+
+1. All three `build.sh` need a Darwin branch adding the rpath to link flags
+   (and `CMAKE_INSTALL_RPATH` pointing at the install-time lib dir —
+   `@loader_path/../lib` is the conda-forge convention).
+2. `libcxx` must be an explicit **host + run** dependency on osx in the
+   recipes — today it only arrives transitively via zig, a *build* dep,
+   whose deps do not propagate to run.
+3. **ADR-1's premise inverts on macOS**: our zig-built LLVM will link the
+   *same* `libcxx` every other conda-forge osx package uses. There is no
+   two-C++-runtimes problem on macOS at all — and by the same token, the
+   "cheap path" (building flang against conda-forge's own `llvmdev`, per
+   the cost observation in [11](11-r-zig-integration.md)) loses its main
+   ABI risk on this platform. Staying on the zig route as specified, but
+   the trade-off should be recorded honestly: on macOS the zig route's
+   ABI-isolation rationale is gone; what remains is toolchain uniformity.
+
+(Correction on a first misreading: probe check 3 — direct C++
+compile+link+run — *also* failed, its log dump was just mistaken for warning
+noise. The probe caught the problem in both places; no probe gap. Checks 3,
+4 and 5 have since been updated to add the Darwin rpath and to treat
+dynamic conda-forge libcxx as the *expected* macOS result.)
+
+---
+
+## 2026-08-11 (later) — full-tree rebuild: llvm-zig finally rebuilt with `-g0`+strip; whole toolchain 59.8 GiB → 3.9 GiB
+
+**Prompted by:** user asked to "rebuild the whole package tree to see if the
+changes to the LLVM package size are meaningful." Answer: **very** — this was
+the deferred fix from the two previous entries finally being cashed in.
+
+**Ran:** `pixi run build-llvm` (49 min) → channel recovery → `pixi run
+build-flang` (53 min) → recovery → `pixi run build-flang-rt` (3 min) →
+recovery → fresh `rm -rf .smoke && pixi run smoke`. Sequential, not
+`build-all`, because each stage's channel copy had to be manually recovered
+from the "already exists" trap **before** the next stage built against it
+(all three hit the trap, as expected — only `build.sh` files changed since
+the original builds, so all build-string hashes were unchanged).
+
+| package | installed, before | installed, after | compressed, before | compressed, after |
+|---|---|---|---|---|
+| `llvm-zig` | 42.7 GiB | **2.98 GiB** (14.3x) | 9 GiB | **740 MiB** (11.7x) |
+| `flang-zig` | 880 MiB | 880 MiB *(unchanged, expected)* | 100 MiB | 99.6 MiB |
+| `flang-rt-zig` | 38.31 MiB | 38.31 MiB *(unchanged, expected)* | 3.31 MiB | 3.31 MiB |
+| **total** | **~43.6 GiB** | **~3.9 GiB** | **~9.1 GiB** | **~843 MiB** |
+
+Against the original pre-optimization state (before any of the three size
+fixes): **59.8 GiB → 3.9 GiB installed (15x), ~11.1 GiB → ~843 MiB
+compressed (13x).**
+
+flang-zig and flang-rt-zig coming out byte-different but size-identical is
+exactly right: their own code was already `-g0`+stripped last round, and the
+llvm-zig `.a` archives they consume at *build* time don't land in their
+packages. The rebuild's purpose for those two was verifying the tree still
+builds and links cleanly against the slim llvm-zig — it does. Stage-2 link
+also got cheaper (53 min vs 61 min total) since the linker now chews through
+debug-free archives.
+
+Verified on the fresh llvm-zig package before promoting it: `readelf -S` on
+`bin/llvm-tblgen`, `bin/clang-22`, `lib/libclang-cpp.so.22.1` — zero debug
+sections, no `.symtab` (i.e. `--strip-all`/`--strip-unneeded` both took).
+Largest remaining files are honest code: `bin/mlir-opt` 137 MiB,
+`lib/libclang-cpp.so.22.1` 108 MiB.
+
+**Smoke: PASS** on a fresh throwaway env solved from the recovered channel —
+which exercises all three rebuilt packages (llvm-zig comes in as flang-zig's
+run dependency).
+
+**What remains, sizewise:** conda-forge's flang stack is ~116 MiB installed
+*total* because it dynamically links `libLLVM.so`/`libMLIR.so`/
+`libclang-cpp.so` once, while ours statically duplicates LLVM into every
+tool binary (ADR-2, the deliberate ABI-safety choice). That ~34x remaining
+gap is architectural, not waste — revisiting it means revisiting ADR-2,
+which is a separate decision, not a build-flag fix. The per-flag
+low-hanging fruit is now fully harvested.
+
+---
+
+## 2026-08-11 — further size cuts: `llvm-strip` + `flang-new` dedup on flang-zig/flang-rt-zig; llvm-zig still deferred
+
+**Prompted by:** follow-up to the `-g0` fix (previous entry) — user asked
+"Are there other places where size could be optimized for the flang-zig
+package?", then confirmed ("yes") applying both fixes found.
+
+### Investigation: two more concrete, non-speculative wins
+
+1. **`bin/flang-new` was a full second copy of `bin/flang-22`**, not a
+   symlink/hardlink — installed by upstream flang's own CMake as two separate
+   `install(PROGRAMS ...)` targets pointing at the same built executable.
+   Confirmed byte-identical with `cmp` before touching anything. At
+   ~140 MiB each post-strip, this alone was pure waste.
+2. **`-g0` only stops *new* debug info from being emitted — it does not undo
+   the symbol-table/relocation bloat already baked into `-O2`-built
+   binaries.** `llvm-strip` (built by our own `llvm-zig`, already a runtime
+   dependency) removes symbol tables and any remaining non-essential
+   sections. Verified `--strip-all`/`--strip-unneeded` both work against our
+   own build first, on a throwaway 738 MiB test binary → 51.5 MiB, before
+   touching the real recipes.
+
+**Fix, applied to all three packages' `build.sh` *and* `build.bat`** (Windows
+mirrored pre-emptively, unverified there — same pattern as every other
+cross-platform fix this session):
+
+- `llvm-zig`: strip pass over `bin/*` (`--strip-all`) and `lib/*.so*`
+  (`--strip-unneeded`), inserted after the tblgen safety-net copy loop.
+- `flang-zig`: `flang-new` deduplicated into a symlink to
+  `flang-<major>` (guarded by a `cmp -s` byte-check — falls back to leaving
+  both files alone with a warning if they ever differ), then a strip pass
+  over `bin/*` (`--strip-all`).
+- `flang-rt-zig`: strip pass over `lib/*.so*` only (`--strip-unneeded`).
+  **Deliberately does not touch `.a`/`.o` files** — those are linker inputs
+  for consumers (r-zig-pixi links against `libflang_rt.runtime.a`), and
+  stripping a static archive's member objects is a different, riskier
+  operation than stripping a final binary/shared library. (In practice this
+  turned out moot on Linux — `.a` members here already carried zero debug
+  sections, because `-g0` in the previous fix already stopped debug info
+  from being generated in the first place.)
+
+### Rebuilt flang-zig and flang-rt-zig (llvm-zig still deliberately deferred)
+
+Same scoping as the `-g0` round: apply the fix everywhere, spend rebuild time
+only on the two smaller/cheaper packages.
+
+| package | installed, before (post-`-g0`) | installed, after (post-strip/dedup) | compressed, before | compressed, after |
+|---|---|---|---|---|
+| `flang-zig` | 5.55 GiB | **880 MiB** (6.5x) | 969 MiB | **100 MiB** (9.7x) |
+| `flang-rt-zig` | 40.47 MiB | **38.31 MiB** (1.06x) | 3.57 MiB | **3.31 MiB** (1.08x) |
+| `llvm-zig` *(still unchanged)* | 42.7 GiB | 42.7 GiB | 9 GiB | 9 GiB |
+
+`flang-rt-zig`'s modest gain is expected and consistent with the design
+above: its dominant files (`libflang_rt.runtime.a` 20.80 MiB,
+`libflang_rt.runtime.so` 13.34 MiB before stripping down further) are mostly
+static archive, which this fix intentionally leaves untouched; only the
+`.so` had anything left to strip.
+
+Verified directly, not just trusted:
+
+- `flang-zig`: `bin/flang-new` extracted as a real symlink
+  (`lrwxrwxrwx ... flang-new -> flang-22`), `readelf -S bin/flang-22 | grep
+  debug` empty.
+- `flang-rt-zig`: `readelf -S lib/.../libflang_rt.runtime.so | grep debug`
+  empty; `.a` sibling confirmed untouched (still present, same content,
+  simply never had debug sections to begin with post-`-g0`).
+
+**Hit the "already exists" packaging trap on both packages again** (expected
+— only `build.sh` changed, build-string hash unchanged), recovered with the
+now-standard procedure (fresh `.conda` copied over stale, `md5`/`sha256`/
+`size`/`depends`/`constrains` patched into `repodata.json` from the fresh
+package's own `info/index.json`, `repodata.json.zst` regenerated, stale
+shard files deleted).
+
+**Re-verified end to end:** `rm -rf .smoke && pixi run smoke` passes cleanly
+— `sum of squares 1..10 = 385.` / `hello: OK`, `modules: OK`. Functionally
+unchanged.
+
+**`llvm-zig` remains the dominant unsolved factor.** Three-package installed
+total is now ~43.6 GiB (was ~48.3 GiB after the `-g0`-only round, ~59.8 GiB
+before either fix) — `llvm-zig`'s untouched 42.7 GiB is now **>97% of the
+total**. Applying `-g0`+strip to `llvm-zig` itself remains the single highest-
+leverage remaining size fix. *(Update: done the same day — see the entry
+above; llvm-zig dropped to 2.98 GiB.)* Separately, and much bigger than
+either of these fixes: static-vs-dynamic linking (ADR-2) is still the actual
+dominant architectural size driver long-term (conda-forge's flang ships
+~116 MiB total via shared `libLLVM.so`/`libMLIR.so`/`libclang-cpp.so`; ours
+is fundamentally multi-GB via static duplication into every tool binary) —
+noted here again as a distinct, larger, riskier decision that was
+investigated but explicitly not pursued this session.
+
+---
+
+## 2026-08-10 — package sizes: found and fixed the `-g0` gap; flang-zig/flang-rt-zig rebuilt, llvm-zig deliberately deferred
+
+**Prompted by:** user noticing `flang-zig`/`flang-rt-zig` were far larger than
+conda-forge's equivalents (`flang` 14.5 MiB compressed vs our 2.12 GiB;
+`libflang-rt` 2.5 MiB vs our ~20 MiB).
+
+### Root cause: `zig cc`/`zig c++` emit full DWARF debug info by default
+
+Confirmed empirically, not assumed: `readelf -S` on `bin/flang-22` showed
+`.debug_info` alone at 1.33 GB, with `.debug_loc`/`.debug_str`/`.debug_line`/
+`.debug_ranges` bringing the total to ~3.0 GB of a 3.2 GB binary — `.text`
+(actual code) was only 97 MB. The captured `compile_commands.json` for
+`Bridge.cpp` showed `-O2 -O3 -DNDEBUG ...` with **no `-g` anywhere** — proving
+this isn't something our flags requested. Isolated with a two-line test: the
+identical `zig c++` invocation compiling a trivial file with `-g0` added
+dropped the object from 81,512 bytes to 1,200 bytes (68x on a trivial file).
+`-O2`/`-DNDEBUG` govern optimization and assertions; debug-info emission is a
+separate axis in Clang that neither implies, and stock Clang defaults to none
+— zig's bundled Clang does not.
+
+**Fix:** added `-g0` to `CFLAGS`/`CXXFLAGS` in all three packages' `build.sh`
+*and* `build.bat` (Windows untested but the same zig binary/defaults apply,
+so applied pre-emptively). Full reasoning documented inline in
+`llvm-zig/recipe/build.sh`, referenced from the other two.
+
+**A near-miss while validating:** the first spot-check after starting the
+flang-zig rebuild inspected a *stale leftover work directory from a prior
+session* (`o97m4YHjt3I`, containing 24 GB of old objects) instead of the
+actual new one — rattler-build had allocated a genuinely fresh work-dir hash
+this time (`9v7Bi7XlQC4`, unlike every previous fix this session which reused
+the same hash). Caught by checking `ps aux` for the actual running process's
+CWD before concluding anything was wrong. Reclaimed the stale directory
+(24 GB) once confirmed unrelated to the current build.
+
+### Rebuilt flang-zig and flang-rt-zig (llvm-zig deliberately NOT rebuilt)
+
+**User's explicit choice**, given the cost of another ~50-minute llvm-zig
+rebuild: apply the fix everywhere, but only spend the rebuild time on
+flang-zig and flang-rt-zig now. This is a *partial* fix, and known to be one
+going in — flang-zig statically links llvm-zig's already-built `.a` archives,
+which still carry their own embedded debug info regardless of flang-zig's own
+flags.
+
+| package | installed, before | installed, after | compressed, before | compressed, after |
+|---|---|---|---|---|
+| `flang-zig` | 16.87 GiB | **5.55 GiB** (3.0x) | 2.12 GiB | **969 MiB** (2.2x) |
+| `flang-rt-zig` | 239 MiB | **40.47 MiB** (5.9x) | ~20 MiB | **3.57 MiB** (5.6x) |
+| `llvm-zig` *(unchanged)* | 42.7 GiB | 42.7 GiB | 9 GiB | 9 GiB |
+
+`bin/flang-22` itself: 3.06 GiB → 1.25 GiB. Verified directly with
+`readelf -S` that the *remaining* 1.25 GiB binary still carries ~1.1 GB of
+debug sections (`.debug_info` 506 MB, `.debug_loc` 248 MB, `.debug_str`
+229 MB, `.debug_line` 71 MB, `.debug_ranges` 46 MB) — down from ~3.0 GB
+before, a 63% reduction in debug bytes for this one binary, entirely
+consistent with "flang's own new code lost its debug info; the
+statically-linked LLVM/Clang/MLIR code from unrebuilt llvm-zig kept its own."
+
+**The honest bottom line: total toolchain size barely moved.**
+`llvm-zig` (42.7 GiB / 9 GiB compressed) is unchanged and dwarfs the combined
+savings on the other two packages (11.3 GiB / 1.15 GiB reclaimed). The
+three-package total went from ~59.8 GiB to ~48.3 GiB installed (~19% overall)
+— a real but modest win, because the single largest package was intentionally
+left untouched. **A full fix requires rebuilding `llvm-zig` with `-g0`**,
+deferred to whenever it's next touched for another reason (e.g. starting
+osx-arm64, which needs a fresh llvm-zig build anyway).
+
+**Hit the "already exists" packaging trap twice more** (once per package),
+applying the now-established recovery both times — extract the fresh
+package's own `info/index.json` for `depends`/`constrains`, patch
+`repodata.json`'s `md5`/`sha256`/`size` *and* those fields, regenerate
+`repodata.json.zst`, drop the sharded index files.
+
+**Re-verified end to end:** `pixi run smoke` fresh (`rm -rf .smoke` first)
+still passes cleanly against the resized packages — `sum of squares 1..10 =
+385.` / `hello: OK`, `modules: OK`. The size fix changed nothing functional.
 
 ---
 

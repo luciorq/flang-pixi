@@ -11,6 +11,15 @@
 #
 set -euo pipefail
 
+# macOS: flang's Darwin driver needs the SDK to find libSystem at link time
+# and honors SDKROOT exactly like clang (without it: "ld: library 'System'
+# not found" — caught by the first osx-arm64 smoke run). Resolve via xcrun
+# when unset; Command Line Tools are a prerequisite on macOS anyway.
+if [[ "$(uname -s)" == "Darwin" && -z "${SDKROOT:-}" ]] && command -v xcrun >/dev/null 2>&1; then
+  export SDKROOT="$(xcrun --show-sdk-path)"
+  echo "SDKROOT resolved via xcrun: ${SDKROOT}"
+fi
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 chan="${root}/channel"
 work="${root}/.smoke"

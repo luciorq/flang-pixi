@@ -25,8 +25,12 @@ context:
   #   clang : flang links clangBasic/clangDriver/clangFrontend, and the clang
   #           driver gives us a working linker driver at runtime.
   #   mlir  : flang's code generation is MLIR-based. Non-negotiable.
-  #   lld   : so the shipped toolchain can link without a system linker.
-  llvm_projects: "clang;lld;mlir"
+  # lld was REMOVED (2026-08-28): the linker is lld-zig's job now (built
+  # standalone against this package). Dropping the project makes stage 1
+  # faster/smaller AND eliminates the bin/lld same-path collision that
+  # previously forced lld-zig to take llvm-zig as a build dep — which is
+  # what blocked win-arm64 cross-builds of the linker.
+  llvm_projects: "clang;mlir"
 
 package:
   name: llvm-zig
@@ -39,7 +43,16 @@ source:
   sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
 
 build:
-  number: 0
+  # 2: build 1 accidentally STILL shipped bin/lld — reused work-dir build
+  # trees keep LLVM_TOOL_LLD_BUILD=ON in the stale CMake cache even after
+  # LLVM_ENABLE_PROJECTS drops lld. Now forced OFF explicitly on the cmake
+  # command line (cache-proof).
+  # 3: build 2 STILL shipped lld via the stale work-dir build tree; the
+  # build scripts now delete build/ before configure. See docs/10.
+  # 4: the REAL leak was the reused host prefix carrying previous
+  # generations' installed lld files into the package; build scripts now
+  # purge them pre-configure. See docs/10.
+  number: 4
   # `zig_` prefix in the build string is a deliberate warning label: these
   # artifacts are NOT interchangeable with conda-forge's llvm packages.
   string: zig_${{ hash }}_${{ build_number }}
@@ -64,13 +77,24 @@ requirements:
     # For a cross build this correctly resolves to the *hosted cross-compiler*
     # package — e.g. targeting win-arm64 from a win-64 machine installs
     # `zig_win-arm64`, which is published only into the win-64 subdir.
-    - ${{ compiler('zig') }}
+    # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
+    # instruction" on the build host; zig is natively a cross-compiler, so
+    # use the proven zig_win-64 — build scripts pass
+    # --target=aarch64-windows-gnu explicitly.
+    - if: target_platform == "win-arm64"
+      then:
+        - zig_win-64 0.16.*
+      else:
+        - ${{ compiler('zig') }}
     # Cross builds only: LLVM needs tblgen and friends as *native* executables
     # to generate sources during the build. Rather than have LLVM configure a
     # nested native sub-build (CROSS_TOOLCHAIN_FLAGS_NATIVE), we hand it a
     # previously built native llvm-zig via LLVM_NATIVE_TOOL_DIR. This is why
     # win-arm64 can only be built *after* win-64 — see docs/05-platform-matrix.md.
-    - if: build_platform != target_platform
+    # NOTE: `build_platform != target_platform` never fires through the
+    # pixi-build backend (it reports build == target even for cross);
+    # condition on the concrete cross target instead.
+    - if: target_platform == "win-arm64"
       then:
         - llvm-zig ==${{ version }}
     # On Linux this pulls sysroot_linux-64 2.28.*, which the zig wrapper
@@ -84,10 +108,39 @@ requirements:
     - cmake >=3.28
     - ninja
     - python
-  host: []
+  host:
+    # macOS only: zig links conda-forge's libcxx DYNAMICALLY there (it does
+    # NOT bundle libc++ statically like on Linux — zig_impl_osx-* itself
+    # depends on libcxx). Making it a real host dep lets its run_exports add
+    # the runtime constraint. build.sh pairs this with -Wl,-rpath,$PREFIX/lib
+    # since zig injects no LC_RPATH. See docs/10-status-log.md (2026-08-25).
+    - if: osx
+      then:
+        - libcxx
+  run:
+    # libcxx has no run_exports of its own — must be explicit (see flang-zig).
+    - if: osx
+      then:
+        - libcxx >=21
   run_exports:
     strong:
       - ${{ pin_subpackage('llvm-zig', upper_bound='x.x') }}
+  # The vs2022 stdlib activation's strong run-export chain (vs2022_runtime ->
+  # ucrt) is meaningless for MinGW-target packages and BREAKS the win-arm64
+  # cross solve (conda-forge's win-arm64 subdir ships no ucrt).
+  ignore_run_exports:
+    by_name:
+      - ucrt
+      - vs2022_runtime
+      # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
+      # were guesses that missed): these landed in the first win-arm64 llvm
+      # package's depends. Meaningless for MinGW targets.
+      - vc
+      - vc14_runtime
+      # The NATIVE llvm-zig build dep (cross only) carries this package's own
+      # strong run-export, which would inject llvm-zig into the win-arm64
+      # host solve before any win-arm64 llvm-zig exists.
+      - llvm-zig
 
 tests:
   - script:

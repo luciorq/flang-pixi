@@ -41,11 +41,22 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 
 # -fPIC everywhere: stage 2 (flang) and stage 3 (flang-rt) link these static
 # archives into shared objects.
-export CFLAGS="-O2 -fPIC"
-export CXXFLAGS="-O2 -fPIC"
+#
+# -g0: unlike stock Clang, `zig cc`/`zig c++` emit full DWARF debug info by
+# DEFAULT — -O2/-O3/-DNDEBUG only control optimization and assertions, a
+# separate axis from debug-info emission, and neither implies -g0. Left
+# unset, every static archive here carries full .debug_info/.debug_loc/
+# .debug_str, and every binary that statically links them (stage 2's
+# flang-22, bbc, ...) inherits and duplicates all of it. Confirmed directly:
+# the same zig c++ invocation on a trivial file dropped from 81 KB to 1.2 KB
+# with -g0 added, nothing else changed. This is why llvm-zig/flang-zig ended
+# up 60-150x larger than conda-forge's llvmdev+clangdev+mlir/flang, which
+# strip (or never emit) debug info by default. See docs/10-status-log.md.
+export CFLAGS="-O2 -fPIC -g0"
+export CXXFLAGS="-O2 -fPIC -g0"
 
 # --- knobs from the recipe ---------------------------------------------------
-LLVM_PROJECTS="${LLVM_PROJECTS:-clang;lld;mlir}"
+LLVM_PROJECTS="${LLVM_PROJECTS:-clang;mlir}"
 LLVM_TARGETS_TO_BUILD="${LLVM_TARGETS_TO_BUILD:-Native}"
 LLVM_PARALLEL_LINK_JOBS="${LLVM_PARALLEL_LINK_JOBS:-1}"
 
@@ -112,9 +123,80 @@ fi
 # macOS: conda-forge's llvmdev patches AddLLVM.cmake so shared libraries get
 # SONAME-style handling like Linux. Keep the same patch here for consistency of
 # the installed layout.
+#
+# Also macOS: zig links conda-forge's libcxx DYNAMICALLY here
+# (@rpath/libc++.1.dylib — zig_impl_osx-* depends on libcxx; the OPPOSITE of
+# Linux, where zig bundles libc++ statically) and injects no LC_RPATH, so
+# without an explicit rpath every C++ binary built below aborts at load with
+# "Library not loaded: @rpath/libc++.1.dylib". LDFLAGS seeds CMake's
+# *_LINKER_FLAGS at configure; CMAKE_INSTALL_RPATH covers installed binaries
+# (linked with it directly since CMAKE_BUILD_WITH_INSTALL_RPATH=ON, and it
+# resolves during the build too because the host prefix exists then).
+# rattler-build relocates the absolute prefix at packaging time. libcxx is a
+# host dependency on osx in recipe.yaml for the same reason. Found by the
+# stage-0 probe on omicron; see docs/10-status-log.md (2026-08-25).
 if [[ "${target_platform}" == osx-* ]]; then
+  # macOS defaults `ulimit -n` to 256; zig's driver opens every input object
+  # of a link at once, and libclang-cpp.dylib links all of clang (~2000
+  # objects) -> "failed to open object ...: ProcessFdQuotaExceeded". Raise
+  # the soft limit as high as the hard limit allows.
+  ulimit -n 65536 2>/dev/null || ulimit -n 10240 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+
   sed -i.bak "s/NOT APPLE AND ARG_SONAME/ARG_SONAME/g" llvm/cmake/modules/AddLLVM.cmake
   sed -i.bak "s/NOT APPLE AND NOT ARG_SONAME/NOT ARG_SONAME/g" llvm/cmake/modules/AddLLVM.cmake
+  export LDFLAGS="-Wl,-rpath,${PREFIX}/lib"
+  CMAKE_EXTRA+=("-DCMAKE_INSTALL_RPATH=${PREFIX}/lib")
+
+  # dsymutil needs Apple's CoreFoundation framework headers, and zig's clang
+  # does not add SDK framework search paths (frameworks are largely outside
+  # zig's cross-compilation model). dsymutil bundles dSYM debug symbols —
+  # nothing in the flang toolchain needs it. Same disable-the-irrelevant-tool
+  # pattern as LLVM_TOOL_LLVM_EXEGESIS_BUILD on Linux.
+  CMAKE_EXTRA+=("-DLLVM_TOOL_DSYMUTIL_BUILD=OFF")
+
+  # libclang (the C API dylib) sets SOVERSION 1, which CMake turns into
+  # `-compatibility_version 1` — zig's driver requires a full x.y.z there
+  # and dies with "unable to parse -compatibility_version '1':
+  # InvalidVersion". Nothing in the flang toolchain consumes libclang's
+  # C API (flang links the C++ static archives), so disable it and its
+  # dependent c-index-test instead of fighting the version parse.
+  CMAKE_EXTRA+=("-DCLANG_TOOL_LIBCLANG_BUILD=OFF")
+  CMAKE_EXTRA+=("-DCLANG_TOOL_C_INDEX_TEST_BUILD=OFF")
+
+  # clang's static-analyzer example plugins and LLVM's BugpointPasses are
+  # `-bundle` dylibs linked with `-Wl,-flat_namespace` — another ld64 flag
+  # zig rejects outright. Nothing in the flang toolchain loads clang or
+  # bugpoint plugins; disable both producers (osx-only gate: on Linux they
+  # build fine and are merely dead weight already shipped in existing
+  # packages). Verified via build.ninja that these were the ONLY
+  # -flat_namespace targets in the graph.
+  CMAKE_EXTRA+=("-DCLANG_PLUGIN_SUPPORT=OFF")
+  CMAKE_EXTRA+=("-DLLVM_TOOL_BUGPOINT_PASSES_BUILD=OFF")
+
+  # zig's driver mis-parses ld64's two-part `-exported_symbols_list <file>`
+  # argument when it arrives as `-Wl,-exported_symbols_list,<file>` (or as two
+  # separate -Wl tokens): the parse breaks zig's own libSystem/-syslibroot
+  # injection and the link dies with "library not found for -lSystem" +
+  # undefined _malloc/_atoi/etc. Only three targets use export files (libLTO,
+  # libRemarks, libclang), via this one AddLLVM.cmake line. The `=` spelling
+  # parses cleanly through zig. Trade-off, measured not assumed: with `=` the
+  # export list is silently NOT applied (the dylib over-exports; verified via
+  # nm on a minimal repro) — acceptable here because nothing consumes these
+  # dylibs from our packages (flang links clang/LLVM statically; ADR-2).
+  # Found at target 6008/6694 of the first osx-arm64 build; see
+  # docs/10-status-log.md (2026-08-25).
+  sed -i.bak3 "s/-Wl,-exported_symbols_list,/-Wl,-exported_symbols_list=/g" llvm/cmake/modules/AddLLVM.cmake
+
+  # Same class of bug, next target down: zig's driver hard-rejects ld64's
+  # `-sectcreate` ("unsupported linker arg"), which clang/tools/driver uses on
+  # Apple to embed an Info.plist metadata section into bin/clang — purely
+  # cosmetic version metadata, nothing reads it in a conda env. In LLVM 22 the
+  # flag arrives via target_link_libraries(... PRIVATE "-Wl,-sectcreate,...")
+  # — drop the item entirely (leaving `PRIVATE` with an empty list, which is
+  # valid CMake; an empty-string item is NOT and poisons the link line). lldb
+  # also uses -sectcreate but is not in LLVM_ENABLE_PROJECTS here. Found at
+  # target 145/679 of the first osx-arm64 resume; see docs/10-status-log.md.
+  sed -i.bak 's/"-Wl,-sectcreate,__TEXT,__info_plist,.*/)/' clang/tools/driver/CMakeLists.txt
 fi
 
 # --- configure ---------------------------------------------------------------
@@ -172,6 +254,22 @@ fi
 # stage-2 build failing on `bin/bbc`'s install step with exactly this
 # mismatch; see docs/10-status-log.md. Safe here because the build tree's
 # bin/../lib layout matches the install prefix's.
+# Reused work dirs keep a stale build tree whose CMake cache resurrects
+# dropped components (lld survived BOTH the projects-list change AND an
+# explicit LLVM_TOOL_LLD_BUILD=OFF this way). ninja recompiles everything
+# after pixi's source re-copy regardless, so a fresh tree costs nothing.
+rm -rf build
+
+# And the HOST PREFIX is reused across runs in the same build dir too:
+# files installed by PREVIOUS generations persist in $PREFIX and get
+# packaged even when the current build never produces them (how bin/lld
+# survived three rebuild attempts after the project was dropped). Purge
+# lld leftovers explicitly; no-op in a fresh dir.
+rm -f "${PREFIX}"/bin/lld "${PREFIX}"/bin/ld.lld "${PREFIX}"/bin/ld64.lld \
+      "${PREFIX}"/bin/lld-link "${PREFIX}"/bin/wasm-ld
+rm -f "${PREFIX}"/lib/liblld*.a
+rm -rf "${PREFIX}/include/lld" "${PREFIX}/lib/cmake/lld"
+
 cmake -G Ninja -S llvm -B build \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
   -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
@@ -213,6 +311,7 @@ cmake -G Ninja -S llvm -B build \
   -DMLIR_INCLUDE_DOCS=OFF \
   -DLLD_INCLUDE_TESTS=OFF \
   -DLLVM_TOOL_LLVM_EXEGESIS_BUILD=OFF \
+  -DLLVM_TOOL_LLD_BUILD=OFF \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"}
 
 # --- build -------------------------------------------------------------------
@@ -232,6 +331,31 @@ for tg in llvm-tblgen mlir-tblgen clang-tblgen mlir-linalg-ods-yaml-gen mlir-pdl
   fi
 done
 
+# --- strip installed binaries and plugin libraries ---------------------------
+# -g0 (above) stops DWARF debug info from being generated in the first place,
+# but static linking still pulls a full ELF symbol table (.symtab/.strtab)
+# from every statically-linked object into every executable — verified
+# directly on flang-zig's binaries: stripping cut an already-`-g0`'d flang-22
+# from 1.28 GB to 147 MB, a further ~9x. Using this build's own just-installed
+# llvm-strip (not any host `strip`), matching ADR-1's "no system tools" rule.
+# --strip-all for bin/ executables: nothing here is ever dlopen()'d, and it
+# does not touch .dynsym (needed at load time). --strip-unneeded for the few
+# .so plugin libraries (clang's static-analyzer plugins, bugpoint passes):
+# the conventional, more conservative choice for anything dynamically loaded.
+# See docs/10-status-log.md for the measurement.
+STRIP_BIN="${PREFIX}/bin/llvm-strip"
+if [[ -x "${STRIP_BIN}" ]]; then
+  echo "== stripping installed binaries with ${STRIP_BIN} =="
+  find "${PREFIX}/bin" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' f; do
+    "${STRIP_BIN}" --strip-all "${f}" 2>/dev/null || true
+  done
+  find "${PREFIX}/lib" -name '*.so*' -type f -print0 | while IFS= read -r -d '' f; do
+    "${STRIP_BIN}" --strip-unneeded "${f}" 2>/dev/null || true
+  done
+else
+  echo "WARNING: llvm-strip not found at ${STRIP_BIN}, skipping strip pass" >&2
+fi
+
 # --- record how this was built -----------------------------------------------
 # Stage 2/3 and future sessions should be able to see the exact configuration
 # without re-reading this script.
@@ -242,5 +366,9 @@ mkdir -p "${PREFIX}/share/llvm-zig"
   echo "llvm_projects=${LLVM_PROJECTS}"
   echo "llvm_targets=${LLVM_TARGETS_TO_BUILD}"
   echo "host_triple=${CONDA_TOOLCHAIN_HOST}"
-  echo "cxx_runtime=zig-bundled-libc++ (static)"
+  if [[ "${target_platform}" == osx-* ]]; then
+    echo "cxx_runtime=conda-forge libcxx (dynamic)"
+  else
+    echo "cxx_runtime=zig-bundled-libc++ (static)"
+  fi
 } > "${PREFIX}/share/llvm-zig/build-info.txt"

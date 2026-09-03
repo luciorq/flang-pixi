@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+#
+# Stage 1.5 — lld-zig
+#
+# Standalone lld so that flang-zig's runtime closure is ~1.2 GiB instead of
+# ~3.9 GiB. flang's driver invokes exactly one llvm-zig tool at use time:
+# ld.lld (verified empirically — see docs/10-status-log.md, 2026-08-25).
+#
+# llvm-zig is a HOST dependency (2026-08-28 rework): host deps resolve for
+# the TARGET platform, which is what makes cross builds (win-arm64 — the
+# platform with no native toolchain at all) produce a genuine target-arch
+# lld. This was previously impossible: llvm-zig used to ship its own
+# bin/lld, and a host-dep install would clobber those same paths, making
+# rattler-build attribute every file to the host package (the empty-package
+# trap, docs/10). llvm-zig build 1+ no longer ships lld (project removed),
+# so the collision is gone and one uniform recipe serves native and cross.
+#
+# SLIMMING (same rework): only bin/ ships. lld's install also lays down
+# liblld*.a + include/lld + lib/cmake/lld (~230 MiB) that nothing consumes
+# at runtime — build scripts delete them before packaging.
+
+context:
+  version: "22.1.8"
+
+package:
+  name: lld-zig
+  version: ${{ version }}
+
+source:
+  url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
+  sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
+
+build:
+  # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
+  # hash does NOT change when only build-dep content changes (the spec string
+  # is the hash input, not the resolved package), so without this bump the
+  # rebuilds collide with the old filenames ("already exists" skip) and the
+  # channel would keep pre-cross-capable binaries. Higher build number also
+  # makes the solver prefer these over any stale build 0 still in a channel.
+  # 2: rebuilt against the lld-less llvm-zig (build 1); lld-zig also
+  # reworked to a host-dep recipe with cross support + binary-only payload.
+  # 4: Windows alias exes hardlink-deduplicated too (build 3 did unix
+  # symlinks only); vc/vc14_runtime export ignores.
+  number: 4
+  string: zig_${{ hash }}_${{ build_number }}
+  script:
+    file: build
+
+requirements:
+  build:
+    # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
+    # instruction" on the build host; zig is natively a cross-compiler, so
+    # use the proven zig_win-64 — build scripts pass
+    # --target=aarch64-windows-gnu explicitly.
+    - if: target_platform == "win-arm64"
+      then:
+        - zig_win-64 0.16.*
+      else:
+        - ${{ compiler('zig') }}
+    - ${{ stdlib('c') }}
+    - cmake >=3.28
+    - ninja
+    - python
+    # Cross builds only: lld's few tablegen steps must run natively.
+    # NOTE: `build_platform != target_platform` never fires through the
+    # pixi-build backend (it reports build == target even for cross);
+    # condition on the concrete cross target instead.
+    - if: target_platform == "win-arm64"
+      then:
+        - llvm-zig ==${{ version }}
+  host:
+    # Target-platform LLVM: LLVMConfig.cmake + the static archives lld links.
+    # See the header comment for why host (cross support) is now safe.
+    - llvm-zig ==${{ version }}
+    # macOS only: zig links conda-forge's libcxx dynamically there (no static
+    # bundling like Linux). Paired with -Wl,-rpath,$PREFIX/lib in build.sh.
+    - if: osx
+      then:
+        - libcxx
+  run:
+    # libcxx has no run_exports of its own — must be explicit (see flang-zig).
+    - if: osx
+      then:
+        - libcxx >=21
+  run_exports:
+    weak:
+      - ${{ pin_subpackage('lld-zig', upper_bound='x.x') }}
+  # CRITICAL, learned the hard way: llvm-zig's STRONG run_exports means that
+  # even as a *build* dep it injects itself into the HOST env (that is what
+  # strong exports do). First build without this: llvm-zig materialized in
+  # $PREFIX, lld's install overwrote llvm-zig-owned paths (bin/lld,
+  # liblld*.a, include/lld), rattler-build attributed every file to the host
+  # package, and the result was a 15.9 KiB package with ZERO content files —
+  # whose test still passed, because the same strong export had put llvm-zig
+  # (and its bin/lld) into the test env too. See docs/10-status-log.md.
+  ignore_run_exports:
+    from_package:
+      - llvm-zig
+    # vs2022 runtime chain: irrelevant for MinGW targets, breaks win-arm64
+    # solves (no ucrt in conda-forge's win-arm64 subdir).
+    by_name:
+      - ucrt
+      - vs2022_runtime
+      # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
+      # were guesses that missed): these landed in the first win-arm64 llvm
+      # package's depends. Meaningless for MinGW targets.
+      - vc
+      - vc14_runtime
+
+tests:
+  - script:
+      - if: unix
+        then:
+          - test -x "${PREFIX}/bin/lld"
+          - test -x "${PREFIX}/bin/ld.lld"
+          - "${PREFIX}/bin/ld.lld --version"
+      - if: win
+        then:
+          - if not exist %LIBRARY_BIN%\lld.exe exit 1
+          - if not exist %LIBRARY_BIN%\lld-link.exe exit 1
+          - '%LIBRARY_BIN%\lld-link.exe /help > nul'
+
+about:
+  homepage: https://lld.llvm.org
+  license: Apache-2.0 WITH LLVM-exception
+  license_file: lld/LICENSE.TXT
+  summary: LLVM lld linker built with the conda-forge zig toolchain
+  description: |
+    Standalone lld from the same LLVM tree as llvm-zig/flang-zig, packaged
+    separately so flang-zig can depend on a small linker at runtime instead
+    of the full llvm-zig development tree.
+  repository: https://github.com/llvm/llvm-project
+
+extra:
+  recipe-maintainers:
+    - luciorq

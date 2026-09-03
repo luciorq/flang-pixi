@@ -50,8 +50,10 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 # rather than working around it. Grepped the flang/flang-rt tree: this macro
 # is checked nowhere else, so the specific value doesn't matter, only that it
 # is defined. See docs/10-status-log.md for how this was found.
-export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1"
-export CXXFLAGS="-O2 -fPIC"
+# -g0: `zig cc`/`zig c++` emit full DWARF debug info by default, independent
+# of -O2/-DNDEBUG — see llvm-zig/recipe/build.sh for the full story.
+export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0"
+export CXXFLAGS="-O2 -fPIC -g0"
 
 MAJOR_VER="${PKG_VERSION%%.*}"
 
@@ -110,6 +112,17 @@ else
       "-DCMAKE_CXX_COMPILER_TARGET=${CONDA_TOOLCHAIN_HOST}"
     )
   fi
+fi
+
+# macOS: zig links conda-forge's libcxx DYNAMICALLY and injects no LC_RPATH —
+# libflang_rt.runtime.dylib needs the rpath or it aborts at load. Same story
+# and fix as llvm-zig/flang-zig; libcxx is a host dep on osx in recipe.yaml.
+# See docs/10-status-log.md (2026-08-25).
+if [[ "${target_platform}" == osx-* ]]; then
+  export LDFLAGS="-Wl,-rpath,${PREFIX}/lib"
+  CMAKE_EXTRA+=("-DCMAKE_INSTALL_RPATH=${PREFIX}/lib")
+  # macOS fd-limit fix — see llvm-zig/flang-zig build.sh.
+  ulimit -n 65536 2>/dev/null || ulimit -n 10240 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 fi
 
 # CMAKE_BUILD_WITH_INSTALL_RPATH=ON avoids a specific failure mode:
@@ -172,6 +185,7 @@ cmake -G Ninja -S runtimes -B build \
   -DCOMPILER_RT_BUILD_PROFILE=OFF \
   -DCOMPILER_RT_BUILD_ORC=OFF \
   -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+  -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF \
   -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
   -DCOMPILER_RT_INCLUDE_TESTS=OFF
 
@@ -216,4 +230,37 @@ if [[ -d "${crt_src}" ]]; then
   mkdir -p "${crt_dst}"
   cp -f "${crt_src}"/* "${crt_dst}/"
   echo "compiler-rt CRT objects relocated to: ${crt_dst}"
+fi
+
+# Darwin twin of the block above: compiler-rt's builtins install as
+# $PREFIX/lib/darwin/libclang_rt.osx.a there (no CRT objects — Mach-O has
+# no crtbegin/crtend), and clang's driver searches the resource dir's
+# lib/darwin/. Same copy-not-symlink rationale.
+crt_src_darwin="${PREFIX}/lib/darwin"
+if [[ -d "${crt_src_darwin}" ]]; then
+  crt_dst_darwin="${PREFIX}/lib/clang/${MAJOR_VER}/lib/darwin"
+  mkdir -p "${crt_dst_darwin}"
+  cp -f "${crt_src_darwin}"/* "${crt_dst_darwin}/"
+  echo "compiler-rt builtins relocated to: ${crt_dst_darwin}"
+fi
+
+# --- strip shared libraries ---------------------------------------------
+# -g0 (above) stops DWARF debug info from being generated; static linking is
+# not the concern here (this package installs no executables), but the
+# shared runtime (libflang_rt.runtime.so) still carries a full ELF symbol
+# table. --strip-unneeded (not --strip-all) is the conventional choice for
+# .so files: it preserves whatever dlopen()/dynamic-linking machinery needs
+# to resolve symbols, only dropping what nothing can reach. Deliberately does
+# NOT touch .a or .o files here (libflang_rt.runtime.a,
+# libclang_rt.builtins*.a, clang_rt.crtbegin/crtend*.o) — those are linker
+# *inputs* for programs built later; stripping their symbols could break
+# that linking. See docs/10-status-log.md.
+STRIP_BIN="${PREFIX}/bin/llvm-strip"
+if [[ -x "${STRIP_BIN}" ]]; then
+  echo "== stripping shared libraries with ${STRIP_BIN} =="
+  find "${PREFIX}/lib" -name '*.so*' -type f -print0 | while IFS= read -r -d '' f; do
+    "${STRIP_BIN}" --strip-unneeded "${f}" 2>/dev/null || true
+  done
+else
+  echo "WARNING: llvm-strip not found at ${STRIP_BIN}, skipping strip pass" >&2
 fi

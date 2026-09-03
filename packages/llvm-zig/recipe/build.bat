@@ -29,13 +29,24 @@ echo == zig toolchain ==
 echo ZIG_CC=%ZIG_CC%
 echo ZIG_CXX=%ZIG_CXX%
 
+REM -g0: `zig cc`/`zig c++` emit full DWARF debug info by DEFAULT, unrelated
+REM to optimization flags -- confirmed on Linux (see build.sh), unverified
+REM here but the same zig binary/defaults apply. Without this every static
+REM archive and binary balloons; llvm-zig/flang-zig ended up 60-150x larger
+REM than conda-forge's equivalents on Linux before this was found. See
+REM docs/10-status-log.md.
+if not defined CFLAGS set "CFLAGS="
+if not defined CXXFLAGS set "CXXFLAGS="
+set "CFLAGS=%CFLAGS% -g0"
+set "CXXFLAGS=%CXXFLAGS% -g0"
+
 REM CMake wants forward slashes for compiler paths on Windows.
 set "ZIG_CC_CMAKE=%ZIG_CC:\=/%"
 set "ZIG_CXX_CMAKE=%ZIG_CXX:\=/%"
 set "ZIG_AR_CMAKE=%ZIG_AR:\=/%"
 set "ZIG_RANLIB_CMAKE=%ZIG_RANLIB:\=/%"
 
-if not defined LLVM_PROJECTS set "LLVM_PROJECTS=clang;lld;mlir"
+if not defined LLVM_PROJECTS set "LLVM_PROJECTS=clang;mlir"
 if not defined LLVM_TARGETS_TO_BUILD set "LLVM_TARGETS_TO_BUILD=Native"
 if not defined LLVM_PARALLEL_LINK_JOBS set "LLVM_PARALLEL_LINK_JOBS=1"
 
@@ -69,6 +80,11 @@ if not defined LLVM_WIN_TRIPLE    set "LLVM_WIN_TRIPLE=x86_64-w64-windows-gnu"
 set "WIN_ABI_ARGS=-DCMAKE_C_COMPILER_TARGET=%ZIG_WIN_ABI_TARGET%"
 set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DCMAKE_CXX_COMPILER_TARGET=%ZIG_WIN_ABI_TARGET%"
 set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DCMAKE_ASM_COMPILER_TARGET=%ZIG_WIN_ABI_TARGET%"
+REM CMAKE_ASM_COMPILER_TARGET does NOT propagate --target to .S compiles
+REM (observed: blake3_sse2_x86-64_windows_gnu.S built with no --target, zig
+REM fell back to its MSVC default and died with WindowsSdkNotFound). Pass
+REM it as a plain flag, which always reaches the command line.
+set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DCMAKE_ASM_FLAGS=--target=%ZIG_WIN_ABI_TARGET%"
 set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DLLVM_HOST_TRIPLE=%LLVM_WIN_TRIPLE%"
 set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DLLVM_DEFAULT_TARGET_TRIPLE=%LLVM_WIN_TRIPLE%"
 
@@ -88,29 +104,71 @@ REM in LLVM_TARGETS_TO_BUILD, or its tools cannot handle the arm64 target.
 REM See docs/05-platform-matrix.md.
 REM ---------------------------------------------------------------------------
 set "CROSS_ARGS="
-if not "%build_platform%"=="%target_platform%" (
-  echo == cross build: %build_platform% -^> %target_platform% ==
-  if not exist "%BUILD_PREFIX%\Library\bin\llvm-tblgen.exe" (
-    echo ERROR: cross build needs a native llvm-zig in BUILD_PREFIX.
-    echo        Build and publish llvm-zig for %build_platform% first.
-    exit /b 1
-  )
-  set "NATIVE_BIN=%BUILD_PREFIX%\Library\bin"
-  set "NATIVE_BIN_CMAKE=!NATIVE_BIN:\=/!"
-  set "CROSS_ARGS=-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"
-  set "CROSS_ARGS=!CROSS_ARGS! -DLLVM_NATIVE_TOOL_DIR=!NATIVE_BIN_CMAKE!"
-  set "CROSS_ARGS=!CROSS_ARGS! -DLLVM_TABLEGEN=!NATIVE_BIN_CMAKE!/llvm-tblgen.exe"
-  set "CROSS_ARGS=!CROSS_ARGS! -DMLIR_TABLEGEN_EXE=!NATIVE_BIN_CMAKE!/mlir-tblgen.exe"
-  set "CROSS_ARGS=!CROSS_ARGS! -DCLANG_TABLEGEN=!NATIVE_BIN_CMAKE!/clang-tblgen.exe"
-  set "CROSS_ARGS=!CROSS_ARGS! -DLLVM_CONFIG_PATH=!NATIVE_BIN_CMAKE!/llvm-config.exe"
-  REM win-arm64 keeps the same GNU ABI choice as win-64.
-  set "CROSS_ARGS=!CROSS_ARGS! -DLLVM_HOST_TRIPLE=aarch64-w64-windows-gnu"
-  set "CROSS_ARGS=!CROSS_ARGS! -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-w64-windows-gnu"
-  set "WIN_ABI_ARGS=-DCMAKE_C_COMPILER_TARGET=aarch64-windows-gnu"
-  set "WIN_ABI_ARGS=!WIN_ABI_ARGS! -DCMAKE_CXX_COMPILER_TARGET=aarch64-windows-gnu"
-  set "WIN_ABI_ARGS=!WIN_ABI_ARGS! -DLLVM_HOST_TRIPLE=aarch64-w64-windows-gnu"
-  set "WIN_ABI_ARGS=!WIN_ABI_ARGS! -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-w64-windows-gnu"
+REM rattler sets build_platform == target_platform in the script env for
+REM cross builds too — the classic equality test NEVER detects cross here.
+REM Test the target directly instead.
+if not "%target_platform%"=="win-arm64" goto :native_build
+REM Cross build (win-64 -> win-arm64). NOTE goto-style flow, NOT a
+REM parenthesized block: delayed expansion (!VAR!) is inactive in the
+REM packaged conda_build.bat context, and %VAR% inside (...) expands at
+REM parse time — both silently produced garbage cmake args on the first
+REM cross attempt (literal !NATIVE_BIN_CMAKE! and a leftover x86_64
+REM triple). Straight-line code expands %VAR% correctly per line.
+echo == cross build to %target_platform% ==
+if not exist "%BUILD_PREFIX%\Library\bin\llvm-tblgen.exe" (
+  echo ERROR: cross build needs a native llvm-zig in BUILD_PREFIX.
+  exit /b 1
 )
+set "NATIVE_BIN_CMAKE=%BUILD_PREFIX:\=/%/Library/bin"
+set "CROSS_ARGS=-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"
+set "CROSS_ARGS=%CROSS_ARGS% -DLLVM_NATIVE_TOOL_DIR=%NATIVE_BIN_CMAKE%"
+set "CROSS_ARGS=%CROSS_ARGS% -DLLVM_TABLEGEN=%NATIVE_BIN_CMAKE%/llvm-tblgen.exe"
+set "CROSS_ARGS=%CROSS_ARGS% -DMLIR_TABLEGEN_EXE=%NATIVE_BIN_CMAKE%/mlir-tblgen.exe"
+set "CROSS_ARGS=%CROSS_ARGS% -DCLANG_TABLEGEN=%NATIVE_BIN_CMAKE%/clang-tblgen.exe"
+set "CROSS_ARGS=%CROSS_ARGS% -DLLVM_CONFIG_PATH=%NATIVE_BIN_CMAKE%/llvm-config.exe"
+set "WIN_ABI_ARGS=-DCMAKE_C_COMPILER_TARGET=aarch64-windows-gnu"
+set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DCMAKE_CXX_COMPILER_TARGET=aarch64-windows-gnu"
+set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DCMAKE_ASM_FLAGS=--target=aarch64-windows-gnu"
+set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DLLVM_HOST_TRIPLE=aarch64-w64-windows-gnu"
+set "WIN_ABI_ARGS=%WIN_ABI_ARGS% -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-w64-windows-gnu"
+REM zig's aarch64-windows-gnu CRT lacks wcstold, which sinks the MLIR
+REM ExecutionEngine runner-utils DLLs (libmlir_float16_utils.dll etc.) at
+REM link. flang never uses the JIT/runners; drop them on the cross leg.
+set "CROSS_ARGS=%CROSS_ARGS% -DMLIR_ENABLE_EXECUTION_ENGINE=OFF"
+REM zig's aarch64-windows-gnu CRT lacks wcstold (x64 flavor has it) and
+REM LLVM's Support code references it -> every exe/dll link fails. On
+REM arm64-Windows long double IS double, so a forwarding shim is exactly
+REM correct. Compile it once and put it on every link line.
+powershell -Command "Set-Content -Path '%SRC_DIR%\wcstold_compat.c' -Value '#include <wchar.h>', 'long double wcstold(const wchar_t *n, wchar_t **e) { return (long double)wcstod(n, e); }'"
+"%ZIG_CC%" --target=aarch64-windows-gnu -O2 -c "%SRC_DIR%\wcstold_compat.c" -o "%SRC_DIR%\wcstold_compat.o"
+if %ERRORLEVEL% neq 0 exit /b 1
+set "WCSTOLD_OBJ=%SRC_DIR:\=/%/wcstold_compat.o"
+set "CROSS_ARGS=%CROSS_ARGS% -DCMAKE_EXE_LINKER_FLAGS=%WCSTOLD_OBJ% -DCMAKE_SHARED_LINKER_FLAGS=%WCSTOLD_OBJ%"
+:native_build
+echo WIN_ABI_ARGS=%WIN_ABI_ARGS%
+echo CROSS_ARGS=%CROSS_ARGS%
+
+REM The zig wrapper .exe on Windows strips embedded quotes when it re-spawns
+REM zig, so llvm-config's add_compile_definitions(CMAKE_CFG_INTDIR="$<CONFIG>")
+REM reaches the compiler as a bare identifier ("use of undeclared identifier
+REM 'Release'", found at target 5935/6659 of the first win-64 build).
+REM llvm-config.cpp guards every use with #if defined(CMAKE_CFG_INTDIR), so
+REM simply removing the define compiles cleanly. Idempotent line filter.
+powershell -Command "$f='llvm/tools/llvm-config/CMakeLists.txt'; (Get-Content $f) | Where-Object { $_ -notmatch 'add_compile_definitions.CMAKE_CFG_INTDIR' } | Set-Content $f"
+if %ERRORLEVEL% neq 0 (
+  echo ERROR: llvm-config CMakeLists filter failed - is powershell on PATH?
+  echo        SYSTEM-context tasks need C:\Windows\System32\WindowsPowerShell\v1.0 in PATH.
+  exit /b 1
+)
+
+REM Stale-build-tree defense — see build.sh comment.
+rmdir /s /q build 2>nul
+REM Stale-host-prefix defense (see build.sh): previous generations' lld
+REM files persist in the reused prefix and would get packaged.
+del /q "%LIBRARY_BIN%\lld.exe" "%LIBRARY_BIN%\ld.lld.exe" "%LIBRARY_BIN%\ld64.lld.exe" "%LIBRARY_BIN%\lld-link.exe" "%LIBRARY_BIN%\wasm-ld.exe" 2>nul
+del /q "%LIBRARY_LIB%\lld*.lib" 2>nul
+rmdir /s /q "%LIBRARY_PREFIX%\include\lld" 2>nul
+rmdir /s /q "%LIBRARY_LIB%\cmake\lld" 2>nul
 
 cmake -G Ninja -S llvm -B build %WIN_ABI_ARGS% %CROSS_ARGS% ^
   -DCMAKE_C_COMPILER="%ZIG_CC_CMAKE%" ^
@@ -147,7 +205,8 @@ cmake -G Ninja -S llvm -B build %WIN_ABI_ARGS% %CROSS_ARGS% ^
   -DMLIR_INCLUDE_TESTS=OFF ^
   -DMLIR_INCLUDE_DOCS=OFF ^
   -DLLD_INCLUDE_TESTS=OFF ^
-  -DLLVM_TOOL_LLVM_EXEGESIS_BUILD=OFF
+  -DLLVM_TOOL_LLVM_EXEGESIS_BUILD=OFF ^
+  -DLLVM_TOOL_LLD_BUILD=OFF
 if %ERRORLEVEL% neq 0 exit /b 1
 
 cmake --build build -j %CPU_COUNT%
@@ -163,6 +222,21 @@ for %%T in (llvm-tblgen mlir-tblgen clang-tblgen) do (
   )
 )
 
+REM Strip installed binaries and plugin DLLs -- mirrors the unix build.sh
+REM strip pass (llvm-strip --strip-all/--strip-unneeded). Unverified on
+REM Windows; llvm-strip.exe existence/behavior not yet confirmed there.
+set "STRIP_BIN=%LIBRARY_BIN%\llvm-strip.exe"
+REM Cross: the host llvm-strip is a foreign-arch binary -- use the native
+REM one from BUILD_PREFIX (llvm-strip handles foreign COFF fine).
+if "%target_platform%"=="win-arm64" set "STRIP_BIN=%BUILD_PREFIX%\Library\bin\llvm-strip.exe"
+if exist "%STRIP_BIN%" (
+  echo == stripping installed binaries with %STRIP_BIN% ==
+  for %%F in ("%LIBRARY_BIN%\*.exe") do "%STRIP_BIN%" --strip-all "%%F" 2>nul
+  for %%F in ("%LIBRARY_BIN%\*.dll") do "%STRIP_BIN%" --strip-unneeded "%%F" 2>nul
+) else (
+  echo WARNING: llvm-strip.exe not found at %STRIP_BIN%, skipping strip pass
+)
+
 if not exist "%LIBRARY_PREFIX%\share\llvm-zig" mkdir "%LIBRARY_PREFIX%\share\llvm-zig"
 (
   echo llvm_version=%PKG_VERSION%
@@ -170,3 +244,9 @@ if not exist "%LIBRARY_PREFIX%\share\llvm-zig" mkdir "%LIBRARY_PREFIX%\share\llv
   echo llvm_targets=%LLVM_TARGETS_TO_BUILD%
   echo cxx_runtime=zig-bundled-libc++ ^(static^)
 ) > "%LIBRARY_PREFIX%\share\llvm-zig\build-info.txt"
+
+REM Reset ERRORLEVEL: on cross builds the host llvm-strip.exe is a
+REM foreign-arch binary whose failed invocations (tolerated per-file via
+REM 2>nul) otherwise leave a poisoned exit code that fails the whole
+REM script AFTER a successful build.
+ver >nul

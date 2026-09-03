@@ -28,7 +28,15 @@ source:
   sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
 
 build:
-  number: 0
+  # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
+  # hash does NOT change when only build-dep content changes (the spec string
+  # is the hash input, not the resolved package), so without this bump the
+  # rebuilds collide with the old filenames ("already exists" skip) and the
+  # channel would keep pre-cross-capable binaries. Higher build number also
+  # makes the solver prefer these over any stale build 0 still in a channel.
+  # 2: rebuilt against the lld-less llvm-zig (build 1); lld-zig also
+  # reworked to a host-dep recipe with cross support + binary-only payload.
+  number: 2
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:
@@ -37,7 +45,15 @@ build:
 
 requirements:
   build:
-    - ${{ compiler('zig') }}
+    # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
+    # instruction" on the build host; zig is natively a cross-compiler, so
+    # use the proven zig_win-64 — build scripts pass
+    # --target=aarch64-windows-gnu explicitly.
+    - if: target_platform == "win-arm64"
+      then:
+        - zig_win-64 0.16.*
+      else:
+        - ${{ compiler('zig') }}
     - ${{ stdlib('c') }}
     - cmake >=3.28
     # conda-forge pins `ninja <1.13` for flang because of a Windows path-escaping
@@ -46,7 +62,10 @@ requirements:
     - python
     # Cross builds (win-64 -> win-arm64) need llvm-tblgen / mlir-tblgen /
     # clang-tblgen as native executables.
-    - if: build_platform != target_platform
+    # NOTE: `build_platform != target_platform` never fires through the
+    # pixi-build backend (it reports build == target even for cross);
+    # condition on the concrete cross target instead.
+    - if: target_platform == "win-arm64"
       then:
         - llvm-zig ==${{ version }}
   host:
@@ -54,10 +73,28 @@ requirements:
     # archives and shares headers with them; a version skew is an immediate
     # link failure at best.
     - llvm-zig ==${{ version }}
+    # macOS only: zig links conda-forge's libcxx dynamically there (no static
+    # bundling like Linux); its run_exports adds the runtime constraint.
+    # Paired with -Wl,-rpath,$PREFIX/lib in build.sh. See docs/10-status-log.md.
+    - if: osx
+      then:
+        - libcxx
   run:
-    # flang needs the stage-1 tree at *runtime* too: it invokes lld to link, and
-    # reads the clang resource directory for target headers/builtins.
-    - llvm-zig ==${{ version }}
+    # The ONLY stage-1 tool flang invokes at runtime is ld.lld — proven by
+    # deleting every llvm-zig file except bin/lld from a working env and
+    # watching compile+link+run (exe AND shared) still succeed. Everything
+    # else flang reads at use time (ISO_Fortran_binding.h, the runtime libs)
+    # ships in flang-zig/flang-rt-zig themselves. So the runtime dep is the
+    # 56 MiB lld-zig, not the ~3 GiB llvm-zig (which stays build/host-only).
+    # See docs/10-status-log.md (2026-08-25).
+    - lld-zig ==${{ version }}
+    # Explicit, learned the hard way: conda-forge's libcxx has NO run_exports
+    # on itself, so a host dep alone adds nothing to run and flang-22 aborts
+    # at load with "Library not loaded: @rpath/libc++.1.dylib" (caught by the
+    # first osx-arm64 smoke). See docs/10-status-log.md.
+    - if: osx
+      then:
+        - libcxx >=21
     # flang's own driver does independent, GCC-style sysroot/CRT-object
     # discovery at link time (it is a Clang-derived driver, not `zig cc` —
     # zig's bundled-libc trick doesn't apply here). flang.cfg points
@@ -74,6 +111,22 @@ requirements:
   run_exports:
     weak:
       - ${{ pin_subpackage('flang-zig', upper_bound='x.x') }}
+  # llvm-zig's STRONG run_export would silently re-add the ~3 GiB runtime
+  # dependency this recipe just replaced with lld-zig. llvm-zig stays a
+  # host/build-time input only.
+  ignore_run_exports:
+    from_package:
+      - llvm-zig
+    # vs2022 runtime chain: irrelevant for MinGW targets, breaks win-arm64
+    # solves (no ucrt in conda-forge's win-arm64 subdir).
+    by_name:
+      - ucrt
+      - vs2022_runtime
+      # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
+      # were guesses that missed): these landed in the first win-arm64 llvm
+      # package's depends. Meaningless for MinGW targets.
+      - vc
+      - vc14_runtime
 
 tests:
   - script:

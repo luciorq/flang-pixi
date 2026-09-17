@@ -76,6 +76,39 @@ if [[ -z "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
 fi
 
 CMAKE_EXTRA=()
+
+# Pin the glibc symbol-version floor into the zig target
+# (x86_64-linux-gnu.2.17, not the bare triple). The conda-forge zig wrapper
+# otherwise applies its own implicit glibc baseline, which changed from 2.31
+# (zig-feedstock build 13) to 2.17 (build 15) and made these archives
+# unlinkable by any later build (logf128 — docs/10 2026-09-03, docs/13).
+# With an explicit floor, what we declare via c_stdlib_version/sysroot
+# (variants.yaml) is exactly what the binaries require — no matter which
+# feedstock build is current. Keep ZIG_GLIBC_FLOOR in sync with
+# c_stdlib_version.
+if [[ "${target_platform}" == linux-* ]]; then
+  case "${target_platform}" in
+    linux-64)      _zigarch=x86_64 ;;
+    linux-aarch64) _zigarch=aarch64 ;;
+  esac
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  ZIG_LINUX_ABI_TARGET="${_zigarch}-linux-gnu.${ZIG_GLIBC_FLOOR}"
+  CMAKE_EXTRA+=(
+    "-DCMAKE_C_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_CXX_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_ASM_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+  )
+
+  # Pre-warm zig's global cache for this target BEFORE CMake runs. The
+  # first-ever compile for a new -target builds zig's libc++/glibc stubs;
+  # letting that happen inside CMake's compiler-feature detection has
+  # (twice) corrupted the generated CMakeCXXCompiler.cmake with interleaved
+  # output. One throwaway compile+link takes the cold path out of band.
+  echo 'int main(){return 0;}' > "${SRC_DIR}/.zig-warmup.cpp"
+  "${ZIG_CXX}" --target="${ZIG_LINUX_ABI_TARGET}" "${SRC_DIR}/.zig-warmup.cpp" \
+    -o "${SRC_DIR}/.zig-warmup.out" || true
+fi
+
 if [[ -n "${CONDA_TOOLCHAIN_HOST}" ]]; then
   CMAKE_EXTRA+=(
     "-DLLVM_HOST_TRIPLE=${CONDA_TOOLCHAIN_HOST}"
@@ -270,6 +303,10 @@ rm -f "${PREFIX}"/bin/lld "${PREFIX}"/bin/ld.lld "${PREFIX}"/bin/ld64.lld \
 rm -f "${PREFIX}"/lib/liblld*.a
 rm -rf "${PREFIX}/include/lld" "${PREFIX}/lib/cmake/lld"
 
+# LLVM_HAS_LOGF128 is forced OFF: whether zig's glibc stubs export logf128
+# depends on the zig-feedstock's glibc baseline (present in build 13, gone in
+# 15), so auto-detection bakes a non-reproducible symbol dependency into the
+# static archives that breaks downstream lld/flang links.
 cmake -G Ninja -S llvm -B build \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
   -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
@@ -312,6 +349,7 @@ cmake -G Ninja -S llvm -B build \
   -DLLD_INCLUDE_TESTS=OFF \
   -DLLVM_TOOL_LLVM_EXEGESIS_BUILD=OFF \
   -DLLVM_TOOL_LLD_BUILD=OFF \
+  -DLLVM_HAS_LOGF128=OFF \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"}
 
 # --- build -------------------------------------------------------------------
@@ -344,6 +382,10 @@ done
 # the conventional, more conservative choice for anything dynamically loaded.
 # See docs/10-status-log.md for the measurement.
 STRIP_BIN="${PREFIX}/bin/llvm-strip"
+# Cross builds: PREFIX's llvm-strip is a target-arch binary that cannot run
+# here; the native one in BUILD_PREFIX (present only when cross) can strip
+# foreign-arch ELFs fine.
+[[ -x "${BUILD_PREFIX}/bin/llvm-strip" ]] && STRIP_BIN="${BUILD_PREFIX}/bin/llvm-strip"
 if [[ -x "${STRIP_BIN}" ]]; then
   echo "== stripping installed binaries with ${STRIP_BIN} =="
   find "${PREFIX}/bin" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' f; do
@@ -366,9 +408,34 @@ mkdir -p "${PREFIX}/share/llvm-zig"
   echo "llvm_projects=${LLVM_PROJECTS}"
   echo "llvm_targets=${LLVM_TARGETS_TO_BUILD}"
   echo "host_triple=${CONDA_TOOLCHAIN_HOST}"
+  echo "zig_conda_package=$(ls "${BUILD_PREFIX}"/conda-meta/zig*_*.json 2>/dev/null | xargs -rn1 basename | tr '\n' ' ')"
+  echo "zig_abi_target=${ZIG_LINUX_ABI_TARGET:-wrapper-default}"
   if [[ "${target_platform}" == osx-* ]]; then
     echo "cxx_runtime=conda-forge libcxx (dynamic)"
   else
     echo "cxx_runtime=zig-bundled-libc++ (static)"
   fi
 } > "${PREFIX}/share/llvm-zig/build-info.txt"
+
+# Build-time tripwire for zig-feedstock glibc-baseline drift (docs/13): fail
+# here, loudly, if anything we ship requires glibc newer than the declared
+# floor — not at some future consumer's link.
+check_glibc_ceiling() {
+  local f="$1" od="" cand ceil
+  for cand in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump" objdump; do
+    command -v "$cand" >/dev/null 2>&1 && { od="$cand"; break; }
+  done
+  [[ -z "$od" ]] && { echo "WARNING: no objdump; skipping glibc ceiling check for $f" >&2; return 0; }
+  ceil=$("$od" -T "$f" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+  [[ -z "$ceil" ]] && return 0
+  if [[ "$(printf '%s\n' "$ceil" "${ZIG_GLIBC_FLOOR}" | sort -V | tail -1)" != "${ZIG_GLIBC_FLOOR}" ]]; then
+    echo "ERROR: $f requires GLIBC_${ceil} > declared floor ${ZIG_GLIBC_FLOOR} — zig baseline drift? see docs/13" >&2
+    exit 1
+  fi
+  echo "glibc ceiling OK: $f (${ceil} <= floor ${ZIG_GLIBC_FLOOR})"
+}
+if [[ "${target_platform}" == linux-* ]]; then
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  check_glibc_ceiling "${PREFIX}/bin/llvm-tblgen"
+  for c in "${PREFIX}"/bin/clang-[0-9]*; do [[ -f "$c" ]] && check_glibc_ceiling "$c"; done
+fi

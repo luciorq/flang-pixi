@@ -77,6 +77,33 @@ cat "${PREFIX}/share/llvm-zig/build-info.txt" || true
 # Same story as stage 1: flang's build runs tblgen (LLVM's, MLIR's and clang's)
 # to generate sources, and those must be build-machine executables.
 CMAKE_EXTRA=()
+
+# Explicit glibc floor in the zig target — the conda-forge zig wrapper's
+# implicit baseline changes between feedstock builds (2.31 in 13 → 2.17 in
+# 15) and must match llvm-zig's archives. Same block in all four packages;
+# rationale in llvm-zig/recipe/build.sh and docs/13.
+if [[ "${target_platform}" == linux-* ]]; then
+  case "${target_platform}" in
+    linux-64)      _zigarch=x86_64 ;;
+    linux-aarch64) _zigarch=aarch64 ;;
+  esac
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  ZIG_LINUX_ABI_TARGET="${_zigarch}-linux-gnu.${ZIG_GLIBC_FLOOR}"
+  CMAKE_EXTRA+=(
+    "-DCMAKE_C_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_CXX_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_ASM_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+  )
+
+  # Pre-warm zig's global cache for this target BEFORE CMake runs. The
+  # first-ever compile for a new -target builds zig's libc++/glibc stubs;
+  # letting that happen inside CMake's compiler-feature detection has
+  # (twice) corrupted the generated CMakeCXXCompiler.cmake with interleaved
+  # output. One throwaway compile+link takes the cold path out of band.
+  echo 'int main(){return 0;}' > "${SRC_DIR}/.zig-warmup.cpp"
+  "${ZIG_CXX}" --target="${ZIG_LINUX_ABI_TARGET}" "${SRC_DIR}/.zig-warmup.cpp" \
+    -o "${SRC_DIR}/.zig-warmup.out" || true
+fi
 if [[ "${build_platform}" != "${target_platform}" ]]; then
   echo "== cross build: ${build_platform} -> ${target_platform} =="
   case "${target_platform}" in
@@ -123,13 +150,26 @@ fi
 # stage-2 build failing on `bin/bbc`'s install step with exactly this
 # mismatch; see docs/10-status-log.md. Safe here because the build tree's
 # bin/../lib layout matches the install prefix's.
+# zig's `ar`/`ranlib` subcommands proved unreliable under Rosetta (osx-64:
+# every archive create fails with "unable to open ... No such file or
+# directory" while llvm-ar from our own llvm-zig works — docs/10
+# 2026-09-04). llvm-zig is in the prefix for this stage anyway; prefer its
+# llvm-ar/llvm-ranlib. BUILD_PREFIX first: on cross builds the PREFIX one
+# is a foreign-arch binary.
+AR_BIN="${ZIG_AR}"; RANLIB_BIN="${ZIG_RANLIB}"
+for _p in "${BUILD_PREFIX}" "${PREFIX}"; do
+  if [[ -x "${_p}/bin/llvm-ar" ]]; then
+    AR_BIN="${_p}/bin/llvm-ar"; RANLIB_BIN="${_p}/bin/llvm-ranlib"; break
+  fi
+done
+
 cmake -G Ninja -S flang -B build \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"} \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
   -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
   -DCMAKE_ASM_COMPILER="${ZIG_CC}" \
-  -DCMAKE_AR="${ZIG_AR}" \
-  -DCMAKE_RANLIB="${ZIG_RANLIB}" \
+  -DCMAKE_AR="${AR_BIN}" \
+  -DCMAKE_RANLIB="${RANLIB_BIN}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
   -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
@@ -190,6 +230,10 @@ fi
 # libc/libm/etc at load time) — only .symtab/.strtab, which nothing at
 # runtime reads. See docs/10-status-log.md for the measurement.
 STRIP_BIN="${PREFIX}/bin/llvm-strip"
+# Cross builds: PREFIX's llvm-strip is a target-arch binary that cannot run
+# here; the native one in BUILD_PREFIX (present only when cross) can strip
+# foreign-arch ELFs fine.
+[[ -x "${BUILD_PREFIX}/bin/llvm-strip" ]] && STRIP_BIN="${BUILD_PREFIX}/bin/llvm-strip"
 if [[ -x "${STRIP_BIN}" ]]; then
   echo "== stripping installed executables with ${STRIP_BIN} =="
   find "${PREFIX}/bin" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' f; do
@@ -233,3 +277,35 @@ if [[ -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
   # works whether or not the caller passes --target.
   cp "${cfg}" "${PREFIX}/bin/flang.cfg"
 fi
+
+# Build-time tripwire for zig-feedstock glibc-baseline drift (docs/13): fail
+# here, loudly, if anything we ship requires glibc newer than the declared
+# floor — not at some future consumer's link.
+check_glibc_ceiling() {
+  local f="$1" od="" cand ceil
+  for cand in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump" objdump; do
+    command -v "$cand" >/dev/null 2>&1 && { od="$cand"; break; }
+  done
+  [[ -z "$od" ]] && { echo "WARNING: no objdump; skipping glibc ceiling check for $f" >&2; return 0; }
+  ceil=$("$od" -T "$f" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+  [[ -z "$ceil" ]] && return 0
+  if [[ "$(printf '%s\n' "$ceil" "${ZIG_GLIBC_FLOOR}" | sort -V | tail -1)" != "${ZIG_GLIBC_FLOOR}" ]]; then
+    echo "ERROR: $f requires GLIBC_${ceil} > declared floor ${ZIG_GLIBC_FLOOR} — zig baseline drift? see docs/13" >&2
+    exit 1
+  fi
+  echo "glibc ceiling OK: $f (${ceil} <= floor ${ZIG_GLIBC_FLOOR})"
+}
+if [[ "${target_platform}" == linux-* ]]; then
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  for c in "${PREFIX}/bin/flang-new" "${PREFIX}"/bin/flang-[0-9]*; do
+    [[ -f "$c" ]] && check_glibc_ceiling "$c"
+  done
+fi
+
+# Record the exact zig toolchain this package was built with — the audit
+# trail for zig-feedstock coupling issues (docs/13).
+mkdir -p "${PREFIX}/share/flang-zig"
+{
+  echo "zig_conda_package=$(ls "${BUILD_PREFIX}"/conda-meta/zig*_*.json 2>/dev/null | xargs -rn1 basename | tr '\n' ' ')"
+  echo "zig_abi_target=${ZIG_LINUX_ABI_TARGET:-wrapper-default}"
+} > "${PREFIX}/share/flang-zig/zig-toolchain.txt"

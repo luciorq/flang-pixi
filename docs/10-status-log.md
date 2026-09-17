@@ -16,16 +16,16 @@ linux-64 ships nothing — it is the parity harness.
 
 | stage | linux-64 *(ref → DONE)* | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
 |---|---|---|---|---|---|---|
-| recipes render + resolve | ✅ | ✅ | ⬜ | ✅ | ⬜ | ✅ |
-| 0 · toolchain probe | ✅ | ✅ *(after Darwin rpath fix)* | ⬜ | ✅ *(windows-gnu target; MSVC default unusable w/o VS)* | ⬜ | n/a |
-| 1 · llvm-zig | ✅ 3.18 GiB *(build 4, lld-less)* | ✅ 2.47 GiB | ⬜ | ✅ | ⬜ | ✅ 3.70 GiB *(cross, unstripped)* |
-| 1.5 · lld-zig | ✅ 63 MiB *(slim, build 3)* | ✅ 49 MiB | ⬜ | ✅ | ⬜ | ✅ *(cross)* |
-| 2 · flang-zig | ✅ *(build 2)* | ✅ | ⬜ | ✅ 1.43 GiB *(MinGW ABI!)* | ⬜ | ✅ 1.26 GiB *(cross)* |
-| 3 · flang-rt-zig | ✅ *(build 2)* | ✅ | ⬜ | ✅ *(+ extracted zig MinGW CRT)* | ⬜ | ✅ 97.6 MiB *(+ aarch64 CRT + wcstold shim)* |
+| recipes render + resolve | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 0 · toolchain probe | ✅ | ✅ *(after Darwin rpath fix)* | n/a *(built natively under Rosetta)* | ✅ *(windows-gnu target; MSVC default unusable w/o VS)* | n/a *(cross)* | n/a |
+| 1 · llvm-zig | ✅ 3.18 GiB *(build 7, 2.17-floored)* | ✅ 2.47 GiB | ✅ *(build 7, Rosetta-native)* | ✅ | ✅ *(build 7, cross, 2.17)* | ✅ 3.70 GiB *(cross, unstripped, build 4)* |
+| 1.5 · lld-zig | ✅ 63 MiB *(slim, build 6)* | ✅ 49 MiB *(build 4)* | ✅ *(build 6)* | ✅ *(build 4)* | ✅ *(build 6, cross)* | ✅ *(cross, build 4)* |
+| 2 · flang-zig | ✅ *(build 5)* | ✅ | ✅ *(build 5)* | ✅ 1.43 GiB *(MinGW ABI!)* | ✅ *(build 5, cross)* | ✅ 1.26 GiB *(cross, build 3)* |
+| 3 · flang-rt-zig | ✅ *(build 5)* | ✅ | ✅ *(build 5)* | ✅ *(+ extracted zig MinGW CRT)* | ✅ *(build 5, cross, resource-dir fix)* | ✅ 97.6 MiB *(+ aarch64 CRT + wcstold shim, build 3)* |
 | Q5 (libc++ leak) | ✅ resolved, no leak | n/a *(same libcxx as all of conda-forge osx)* | ⬜ | ⬜ | ⬜ | ⬜ |
-| smoke | ✅ **PASS** *(closure 1.3 GiB)* | ✅ **PASS** *(783 MB)* | ⬜ | ✅ **PASS, self-contained** | ⬜ | ⚠ **built, UNVALIDATED** *(no arm64 hardware)* |
+| smoke | ✅ **PASS** *(closure 1.3 GiB)* | ✅ **PASS** *(783 MB)* | ✅ **PASS** *(under Rosetta; x86_64 Mach-O runs)* | ✅ **PASS, self-contained** | ⚠ **built, UNVALIDATED** *(no aarch64 hardware/qemu)* | ⚠ **built, UNVALIDATED** *(no arm64 hardware)* |
 | ABI probe (zig cc ↔ flang) | ✅ **PASS, our own flang** | ✅ **PASS** | ⬜ | ⬜ next | ⬜ | ⬜ |
-| r-zig `make check` lapack.R | ✅ **PASS** *(+ contract test, via flang-zig-validation worktree)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| r-zig `make check` lapack.R | ✅ **PASS** *(2.17 gen; R binaries measure ≤ 2.17)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ✅ pass · ❌ fail · ⬜ not attempted
 
@@ -39,23 +39,270 @@ yet run since it lives in a different repository).
 
 ## Next actions, in order
 
-1. **osx-arm64** — the highest-value target ([11](11-r-zig-integration.md)).
-   Start with `pixi run probe` there. Given how many of this session's linux
-   bugs were libc++-specific gaps flang/flang-rt never gets tested against
-   (conda-forge always uses gcc+libstdc++), expect macOS — a *second* libc++
-   platform with a completely different CRT/C-library story than Linux's
-   sysroot — to surface its own new issues rather than repeat these exact
-   ones. Read [09](09-risks-and-open-questions.md) R1 first.
-2. Then osx-64, matching the same recipes (no platform-specific work needed
-   beyond what already exists there).
-3. win-64 with the MinGW target ([09](09-risks-and-open-questions.md) R9) —
-   the least-verified leg, expect it to be genuinely hard.
-4. linux-aarch64, then win-arm64 (cross-only from win-64).
-5. Once a target is built, actually take it to r-zig-pixi and run its own
-   `make check` / `lapack.R` / contract tests — that is the real bar, not
-   `pixi run smoke` here.
+*(rewritten 2026-09-05 — all six platform chains now exist; the original
+platform bring-up list is done)*
+
+1. **Publish to prefix.dev `universe`** — fully staged, blocked only on a
+   `pfx_…` API key from the user. Runbook with exact per-host commands and
+   file lists: [14-publishing-runbook.md](14-publishing-runbook.md).
+2. **Post-publish proof**: point the r-zig-pixi validation worktree at the
+   published channel (drop the file:// entry), re-run `pixi run build` +
+   `check` once.
+3. **Upstream r-zig-pixi changes**: the validation worktree
+   (`flang-zig-validation` branch) holds an uncommitted glibc-ceiling
+   check for `scripts/verify-bundle.sh` + the 2.17-generation lock —
+   cherry-pick into the main branch when the user is ready.
+4. **Hardware validation** for the two built-but-unvalidated targets:
+   linux-aarch64 (any arm64 Linux box or qemu binfmt) and win-arm64
+   (arm64 Windows machine).
+5. **r-zig validation on the other platforms** — osx-64 can run today on
+   omicron under Rosetta (same trick as the smoke test); osx-arm64 and
+   win-64 need their r-zig runs too. `lapack.R` is the bar.
+6. Optional/deferred: publish llvm-zig (needs a size/quota decision);
+   the five upstream reports in [12](12-upstream-reports.md) are drafted
+   but deliberately NOT filed (user decision 2026-09-04: workarounds
+   only, no upstreaming for now).
 
 ---
+
+## 2026-09-05 — publishing to prefix.dev staged and attempted; BLOCKED on a real API key; session wrapped
+
+User decisions: publish to the existing **`universe`** channel; **consumer
+set only** (lld-zig + flang-zig + flang-rt-zig, all six platforms;
+llvm-zig deliberately withheld — build-time-only, ~10 GB across subdirs).
+Full runbook with the exact per-host file lists is
+[14-publishing-runbook.md](14-publishing-runbook.md).
+
+Upload attempts were launched from all three hosts and all failed on
+auth: the `*.prefix.dev` entry in `~/.rattler/credentials.json`
+(gamma/omicron) is a **BearerToken** — download-scoped, HTTP 401 against
+the upload API — and kappa has no prefix.dev credential at all. Uploads
+need a `pfx_…` API key with write scope on `universe`
+(`PREFIX_API_KEY` env or `rattler-build auth login prefix.dev
+--api-key …`); r-zig-pixi's own `prefix-delete-package.sh` header
+documents the same token-class distinction. **Next session: obtain the
+key from the user, store on all three hosts, rerun the three prepared
+upload commands, verify with `prefix-list-packages.sh`.**
+
+Also from this closing stretch, recorded here so nothing lives only in
+session state:
+- r-zig-pixi's `flang-zig-validation` worktree carries two UNCOMMITTED
+  changes: the lock update to the 2.17 toolchain generation, and a new
+  glibc-ceiling check appended to `scripts/verify-bundle.sh` (scans every
+  ELF in the bundle, fails above floor 2.17; tested against the real
+  dist: worst = libR.so at exactly 2.17). Worth cherry-picking into
+  r-zig-pixi proper.
+- kappa keeps a pixi 0.77.1 fallback at
+  `C:\Users\admin\.pixi\bin\pixi-0.77.1-backup.exe` from the 0.79 update.
+- The `uploadwin` scheduled task + `C:\Users\admin\upload-win.bat` on
+  kappa are the ready-to-rerun Windows upload pair.
+
+## 2026-09-04 (even later) — two new platforms in one day: osx-64 (native under Rosetta, SMOKE PASS) and linux-aarch64 (cross, 2.17-floored); tools updated fleet-wide
+
+**osx-64 — done and validated, the cheap way.** No cross machinery at all:
+omicron (Apple Silicon) runs the whole x86_64 toolchain under Rosetta 2, so
+the chain was built *natively* with standalone `rattler-build
+--build-platform osx-64` (llvm `zig_e4e1b1f_7`, lld `zig_79df4ff_6`, flang
+`zig_28cffc0_5`, flang-rt `zig_79df4ff_5`, all in `channel/osx-64`). Rosetta
+build speed was ≈ native (llvm in ~70 min). Smoke: a throwaway pixi project
+with `platforms = ["osx-64"]` — pixi itself prints "falling back to osx-64
+(emulated with Rosetta)" and installs — then `flang hello.f90` produced a
+genuine `Mach-O 64-bit executable x86_64` that ran correctly. **PASS.**
+
+One real bug found: **zig's `ar`/`ranlib` subcommands are broken under
+Rosetta** — every archive create fails with `unable to open '<out>': No
+such file or directory` (reproduced with fresh objects, in /tmp, with
+absolute paths; `zig cc` itself works). Maddeningly, the llvm stage had
+archived fine that same morning with the same zig build (`h1104ac7_15`) —
+unexplained, possibly load/state-dependent. Self-contained workaround, no
+upstream needed: lld/flang/flang-rt `build.sh` now prefer
+`llvm-ar`/`llvm-ranlib` from the prefix (BUILD_PREFIX first for cross,
+ZIG_AR fallback) — our own llvm-ar works fine under Rosetta. The llvm
+stage keeps ZIG_AR (no llvm-ar exists yet at stage 1; empirically it
+worked).
+
+**linux-aarch64 — built, 2.17-floored, cross from gamma.** Same standalone
+rattler-build pattern as win-arm64: recipes got `zig_linux-64` +
+native-llvm-tools conditionals for `target_platform == "linux-aarch64"`;
+the glibc-floor block automatically targets `aarch64-linux-gnu.2.17`; the
+cold-cache warmup covered the new target (configure passed first try).
+All four packages in `channel/linux-aarch64` (llvm `zig_aaeeeb3_7`, lld
+`zig_11eb1b2_6`, flang `zig_634dca5_5`, flang-rt `zig_11eb1b2_5`), every
+tripwire line `<= floor 2.17`, binaries verified genuinely aarch64 (ELF
+e_machine). **UNVALIDATED** — no arm64 hardware, no qemu binfmt on gamma.
+One layout bug found+fixed: on cross, flang-rt names its clang resource
+subdir after the BUILD machine's triple (`x86_64-unknown-linux-gnu/`
+holding aarch64 binaries); the driver resolves by TARGET triple. build.sh
+now renames it (`aarch64-unknown-linux-gnu`); flang-rt rebuilt+republished.
+`scripts/publish-crossbuilt.py` is the reusable pixi-publish bypass
+(copy + repodata regen from true index.json).
+
+**Ops:** gamma's root disk hit 100% (silently killed the first aarch64
+llvm mid-strip AND broke the session's temp dir) — standalone
+rattler-build's `--output-dir` was on the root disk unlike pixi's
+/data-symlinked build dirs. `aarch64out` now symlinks to
+`/data/gamma/.../aarch64out`; rule: **any rattler-build output dir on gamma
+must live on /data**. Tools updated per user request: pixi 0.79.0 +
+rattler-build 0.75.0 (conda-forge latest) on gamma/omicron/kappa — kappa's
+pixi via the conda-forge `pixi` package copied over the binary (github
+throttled; old binary kept as `pixi-0.77.1-backup.exe`).
+
+## 2026-09-04 (later) — r-zig-pixi validated against the 2.17 generation: R builds, lapack.R passes, R binaries measure ≤ 2.17 end-to-end
+
+The real bar, re-run against the new toolchain. In the `flang-zig-validation`
+worktree, lock updated to flang-zig `zig_a030ffe_5` / flang-rt-zig
+`zig_1e79d9a_5` / lld-zig `zig_1e79d9a_6` (targeted `pixi update`, avoiding
+the known pango/harfbuzz re-solve breakage):
+
+- `pixi run build`: **"zig-built R OK: R version 4.6.1"**.
+- `pixi run check`: **PASS**, including `lapack.R` ("running code ... OK,
+  comparing 'lapack.Rout' ... OK") — the test that catches the Fortran
+  miscompile class this whole project exists to avoid.
+- **Old-server proof, measured on the shipped artifacts**
+  (`dist/R-4.6.1-slim-zig`): `bin/exec/R` → GLIBC_2.2.5, `libR.so` →
+  GLIBC_2.17, `libRlapack.so` (all-Fortran, our flang) → GLIBC_2.2.5,
+  `libRblas.so` → no versioned refs at all. **Everything ≤ 2.17.**
+
+Caveat worth acting on in r-zig-pixi: R itself is compiled by r-zig's *own*
+zig invocation, and today's ≤2.17 result partly rides on zig-feedstock
+build 15's implicit 2.17 default — the same default that flipped once
+already (docs/13). Recommendation for r-zig-pixi proper: adopt the same
+explicit `--target=x86_64-linux-gnu.2.17` floor and a post-build
+`GLIBC_*` ceiling check on `libR.so`/`bin/exec/R`, so its old-server
+guarantee doesn't depend on feedstock luck.
+
+## 2026-09-04 — 2.17-floor chain shipped: llvm _7, lld _6, flang _5, flang-rt _5; smoke PASS; one new build-infra bug found and fixed
+
+The 2.17 rebuild surfaced a latent race that any future floor/target change
+would have hit: the **first-ever zig compile for a new `-target`** (which
+cold-builds zig's libc++ and glibc stubs) corrupted CMake's generated
+`CMakeCXXCompiler.cmake` when it happened inside CMake's compiler-feature
+detection — interleaved libc++ header fragments in the feature list,
+"Invalid character escape" at configure. Hit twice (llvm attempt 1, lld
+attempt 2 — each build env has its own cold cache), clean on every retry
+with a warm cache. Fix: all four `build.sh` now do a throwaway
+compile+link at `${ZIG_LINUX_ABI_TARGET}` *before* cmake runs, taking the
+cold path out of band. Proven: flang/flang-rt configured first-try after
+the fix.
+
+Final linux-64 generation, all tripwire-verified at exactly the floor
+(`glibc ceiling OK: ... (2.17 <= floor 2.17)` for llvm-tblgen, clang-22,
+lld, flang-new, flang-22, and — via the fixed resource-dir glob —
+libflang_rt.runtime.so), smoke PASS:
+`llvm-zig zig_f1366af_7`, `lld-zig zig_1e79d9a_6`, `flang-zig zig_a030ffe_5`,
+`flang-rt-zig zig_1e79d9a_5`. **r-zig-pixi should build against this
+generation** — earlier linux packages in the channel carry implicit
+2.26–2.31-era requirements and are not old-server-safe.
+
+## 2026-09-03 (even later) — glibc floor set to 2.17: old-server support is a stated goal
+
+User decision: **glibc 2.17 (CentOS 7 era) is the target floor — supporting
+old Linux servers running old OSes is one of the project's most important
+goals.** The resilience machinery from the previous entry made this a
+one-knob change: `c_stdlib_version` 2.28 → 2.17 (variants.yaml ×4, sets
+sysroot headers + the flang-zig sysroot run-dep) and `ZIG_GLIBC_FLOOR`
+2.28 → 2.17 (build.sh ×4, sets the zig `-target` and the ceiling tripwire's
+budget). Build bumps: llvm 7, lld 6, flang 5, flang-rt 5; linux chain
+rebuilt + smoke under the 2.17 floor, tripwire now enforcing ≤ 2.17 on every
+shipped binary. Confidence basis: feedstock build 15's implicit default was
+already ~2.17 and the whole chain built and smoked under it earlier today.
+Also fixed: the flang-rt tripwire was checking a symlink and missing the
+real `libflang_rt.runtime.so` in the clang resource dir (glob now covers
+both; the miss was found because the expected "ceiling OK" line was absent
+from the log — the audit worked).
+
+## 2026-09-03 (later) — resilience hardening against zig-feedstock updates; full story in docs/13
+
+Follow-up to the logf128 incident below, turning the point fix into a
+defense-in-depth. New document: [13-zig-feedstock-coupling.md](13-zig-feedstock-coupling.md)
+— read it before touching the zig dependency or wrapper-related logic.
+
+Measured the actual change: build 13's generated glibc stubs reach
+**GLIBC_2.31**, build 15's reach **GLIBC_2.17** — and neither matched our
+declared `c_stdlib_version 2.28` (the conda sysroot is `-isysroot`/headers
+only; the link-time symbol surface comes from zig's stubs, whose version is
+chosen by the `-target` triple).
+
+Implemented, all four packages:
+1. **Explicit glibc floor**: `--target=<arch>-linux-gnu.2.28` via
+   `CMAKE_{C,CXX,ASM}_COMPILER_TARGET` on linux (verified the build-15
+   wrapper honors it; test binary ceiling comes out exactly GLIBC_2.28).
+   What we declare is now what we build, independent of feedstock defaults.
+2. **Ceiling tripwire**: post-build `check_glibc_ceiling` via
+   `llvm-objdump -T` fails the build if any shipped binary requires glibc
+   above the floor.
+3. **zig pinned to exact version 0.16.0** (variants.yaml; feedstock build
+   number deliberately NOT pinned — rationale in docs/13).
+4. **Audit files**: every package now ships
+   `share/<pkg>/zig-toolchain.txt` recording the exact zig conda package
+   and ABI target used.
+Build bumps: llvm 6, lld 5, flang 4, flang-rt 4; linux chain rebuilt under
+the explicit floor (llvm → lld → flang → flang-rt → smoke). Recipes synced
+to the other build hosts; osx/win pick the changes up on their next natural
+rebuild (their C-library coupling differs — see the platform table in
+docs/13).
+
+## 2026-09-03 — zig-feedstock glibc-baseline flip broke every new linux link (logf128); found, fixed, chain rebuilt; win-arm64 chain refreshed; minor items closed
+
+**The incident.** The routine lld-zig build-4 rebuild on linux failed at the
+final link: `ld.lld: error: undefined symbol: logf128` (referenced from
+`libLLVMAnalysis.a(ConstantFolding.cpp.o)`). Same recipe had linked fine on
+Aug 28. Root cause is upstream, not us: **conda-forge zig-feedstock moved
+from build 13 to build 15 between our builds and changed the glibc version
+its stub libraries target.** Build 13's generated stub `libm.so.6` exports
+`logf128` (glibc ≥ 2.26 surface); build 15's does not. Our published
+llvm-zig build-4 archives were *configured* under build 13, where CMake's
+`check_symbol_exists(logf128 …)` succeeded, so `HAS_LOGF128` baked undefined
+`logf128` references into the static archives — unresolvable by any link
+performed under build 15. Minimal repro (two-line `lf.c` calling
+`logf128`): links under the preserved build-13 env, fails under 15;
+stub-level proof: `nm` on the zig-generated `libm.so.6` in each env's cache
+shows 3 vs 0 `logf128` symbols.
+
+**The fix.** `-DLLVM_HAS_LOGF128=OFF` in llvm-zig's build scripts (both
+platforms). Auto-detection here is a reproducibility hazard — the result
+depends on which zig-feedstock build happens to be current — and OFF also
+drops a hidden glibc ≥ 2.26 runtime requirement from anything linking the
+archives. llvm-zig bumped to build 5 (`zig_5b94427_5`, verified 0 `logf128`
+refs in the packaged archives), then the linux chain rebuilt on top:
+lld `_4`, flang `_3`, flang-rt `_3` — smoke test **PASS**. osx/win are
+unaffected (no glibc). Filed as draft 5 in [12](12-upstream-reports.md).
+
+**win-arm64 chain refreshed** (cross from win-64, standalone rattler-build):
+lld `_4`, flang `_3`, flang-rt `_3` rebuilt and placed in
+`channel\win-arm64` with repodata regenerated from each package's true
+`info/index.json` — which also killed the stale injected `vc`/`vc14_runtime`
+depends on the llvm-zig entry (now `depends: []`; recipes additionally carry
+`ignore_run_exports` for `vc`/`vc14_runtime` so future builds stay clean).
+Still **built, UNVALIDATED** — no arm64 hardware.
+
+**Minor-items outcomes — two honest no-ops:**
+- **Windows lld alias dedup is a packaging no-op.** `mklink /h` hardlinks
+  survive the build but tar flattens them back into independent files:
+  win-64 lld `_4` is 101.8 MB ≈ `_3`, and installs still materialize 5
+  copies. zstd's long-range matching was already absorbing the duplication
+  in the compressed archive. The unix symlink dedup *does* work (63 MiB
+  linux / 49 MiB osx packages, symlinks preserved).
+- **Cross-strip is a size no-op** (`-g0` builds left nothing to strip) but
+  stays: it replaces the foreign-arch host `llvm-strip.exe` (which can't run
+  on the x64 builder and used to poison ERRORLEVEL) with the native one from
+  `BUILD_PREFIX`.
+
+**Ops lessons (kappa):**
+- Seeding a rattler src cache needs all three pieces: the tarball, its
+  `.metadata/<hash>.json`, *and* the `<hash>_extracted` dir — tarball+json
+  alone yields `CMake Error: source directory %SRC_DIR%/lld does not exist`.
+  Everything needed lives in `armout\src_cache`; robocopy locally (1.9 GB in
+  3 min) instead of transferring: the gamma→kappa ssh link measures
+  ~50–110 KB/s and github from kappa is throttled to ~1 KB/s even with
+  `--resolve` IP pinning.
+- scp/sftp to kappa can stall silently: zombie `sftp-server.exe` processes
+  hold Windows file locks on partial uploads and every retry blocks opening
+  the same file. Fix: `taskkill /f /im sftp-server.exe`, delete partials.
+
+[12](12-upstream-reports.md) now holds five ready-to-file upstream drafts:
+pixi cross-publish panic, zig-feedstock win-arm64 binary crash, zig aarch64
+`wcstold` gap, flang RTBuilder MinGW guard, zig-feedstock glibc baseline.
 
 ## 2026-08-25 (later) — lld-zig implemented (one packaging trap); osx-arm64 stage 1 in progress: four more zig-on-macOS bugs found and fixed
 

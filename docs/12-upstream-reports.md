@@ -1,6 +1,6 @@
 # 12 — Upstream bug reports, ready to file
 
-Four genuine upstream bugs were found while building this toolchain. Each
+Five genuine upstream bugs were found while building this toolchain. Each
 section below is a self-contained draft: title, repository, and body ready
 to paste into an issue tracker. File them from a machine with GitHub access
 (kappa is DNS-blocked for github.com). Where a workaround exists in this
@@ -119,3 +119,38 @@ repo, the draft links the mechanism so upstream can reproduce and compare.
 > We carry exactly that as a local patch
 > (`packages/flang-zig/recipe/patch-rtbuilder.ps1`) and both win-64 and
 > win-arm64 MinGW flang builds work with it.
+
+---
+
+## 5. conda-forge zig-feedstock: glibc stub baseline changed between builds, breaking links against libraries built with earlier builds
+
+**Repo:** `conda-forge/zig-feedstock`
+**Title:** `linux-64 build 13 → 15 changed the glibc version zig's stub libraries target — new links against archives built under 13 fail (repro: logf128)`
+
+> Between `zig_linux-64 0.16.0 he14ddc7_13` and `hbab2c52_15` the glibc
+> version the wrapper targets changed. Measured from the stub libraries
+> each build generates (`nm -D` on the cached stubs): build 13's stubs
+> carry symbol versions up to **GLIBC_2.31** (libm exports `logf128`),
+> build 15's only up to **GLIBC_2.17** (no `logf128`). Minimal repro:
+>
+> ```c
+> extern __float128 logf128(__float128);
+> int main(void){ volatile __float128 x = 2; return (int)(double)logf128(x); }
+> ```
+>
+> `x86_64-conda-linux-gnu-zig-cxx repro.c` links under build 13 and fails
+> under build 15 with `ld.lld: error: undefined symbol: logf128`.
+>
+> A lower baseline is a reasonable portability choice, but the silent flip
+> breaks a real workflow: static libraries compiled under build 13 whose
+> configure step *detected* logf128 (LLVM's `HAS_LOGF128` does exactly
+> this) carry undefined references that no longer resolve when a
+> downstream package links them under build 15. Request: document the
+> targeted glibc version per build, keep it stable within a zig version,
+> and consider exporting it (e.g. `ZIG_GLIBC_VERSION`) so downstream
+> recipes can detect mismatches. Our full mitigation (may be useful to
+> other consumers): pass an explicitly glibc-versioned target
+> (`--target=x86_64-linux-gnu.2.28`) so the stub surface is chosen by the
+> recipe rather than the wrapper default — the wrapper honors it — plus a
+> post-build check that `llvm-objdump -T` shows no `GLIBC_*` requirement
+> above the declared floor.

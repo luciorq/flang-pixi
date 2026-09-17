@@ -52,7 +52,14 @@ build:
   # 4: the REAL leak was the reused host prefix carrying previous
   # generations' installed lld files into the package; build scripts now
   # purge them pre-configure. See docs/10.
-  number: 4
+  # 5: LLVM_HAS_LOGF128=OFF — the zig-feedstock 13→15 glibc-baseline flip
+  # made build-4 archives (logf128 detected under 13) unlinkable under 15.
+  # 6: explicit glibc floor in the zig target (x86_64-linux-gnu.2.17) +
+  # build-time ceiling check + zig-toolchain record file. See docs/13.
+  # 7: glibc floor LOWERED to 2.17 (CentOS 7 era) — supporting old Linux
+  # servers is a project goal; c_stdlib_version + ZIG_GLIBC_FLOOR moved
+  # together. Ceiling tripwire now enforces <=2.17. See docs/13.
+  number: 7
   # `zig_` prefix in the build string is a deliberate warning label: these
   # artifacts are NOT interchangeable with conda-forge's llvm packages.
   string: zig_${{ hash }}_${{ build_number }}
@@ -84,7 +91,15 @@ requirements:
     - if: target_platform == "win-arm64"
       then:
         - zig_win-64 0.16.*
-      else:
+    # linux-aarch64 cross from linux-64: same hosted-cross story as
+    # win-arm64 — use the build platform's proven zig; the build scripts'
+    # glibc-floor block keys off target_platform and passes
+    # --target=aarch64-linux-gnu.<floor> explicitly.
+    - if: target_platform == "linux-aarch64"
+      then:
+        - zig_linux-64 0.16.0.*
+    - if: target_platform != "win-arm64" and target_platform != "linux-aarch64"
+      then:
         - ${{ compiler('zig') }}
     # Cross builds only: LLVM needs tblgen and friends as *native* executables
     # to generate sources during the build. Rather than have LLVM configure a
@@ -94,13 +109,18 @@ requirements:
     # NOTE: `build_platform != target_platform` never fires through the
     # pixi-build backend (it reports build == target even for cross);
     # condition on the concrete cross target instead.
-    - if: target_platform == "win-arm64"
+    - if: target_platform == "win-arm64" or target_platform == "linux-aarch64"
       then:
         - llvm-zig ==${{ version }}
-    # On Linux this pulls sysroot_linux-64 2.28.*, which the zig wrapper
+    # On Linux this pulls sysroot_linux-64 2.17.*, which the zig wrapper
     # auto-detects at $CONDA_PREFIX/<arch>-conda-linux-gnu/sysroot and passes
-    # as -isysroot. That is how we get a glibc floor (2.28 by default; the
-    # version comes from c_stdlib_version in variants.yaml).
+    # as -isysroot. NOTE: that affects HEADERS only — it is NOT a glibc
+    # symbol floor. zig links against its own generated glibc stubs, whose
+    # version comes from the -target triple; the feedstock's implicit choice
+    # changed under us once (2.31 → 2.17, the logf128 incident, docs/13), so
+    # build.sh now pins the floor explicitly via
+    # --target=<arch>-linux-gnu.2.17. Keep that in sync with c_stdlib_version.
+    # 2.17 (CentOS 7 era) is a project goal: support old Linux servers.
     # On osx it pins MACOSX_DEPLOYMENT_TARGET, which the zig wrapper folds into
     # the -target triple at runtime.
     # On win it pulls vs2022 — see docs/05-platform-matrix.md, OPEN QUESTION W1.

@@ -2,8 +2,15 @@
 # for why zig_compiler / c_stdlib have to be spelled out.
 zig_compiler:
   - zig
+# Exact zig VERSION pin (0.16.0, not 0.16.*): a zig minor bump swaps the
+# bundled clang, libc++ and MinGW CRT under the whole toolchain and must be a
+# deliberate, chain-wide rebuild. The feedstock BUILD number is deliberately
+# NOT pinned — feedstock rebuilds changed the implicit glibc baseline once
+# already (build 13: 2.31 → build 15: 2.17, the logf128 incident, docs/13),
+# and our defense is the explicit glibc floor in build.sh plus the build-time
+# ceiling check, not a stale build pin that would also freeze fixes.
 zig_compiler_version:
-  - "0.16"
+  - "0.16.0"
 
 # NOTE the shape: `then:` must be a LIST, not a scalar. Writing
 #   - if: linux
@@ -23,9 +30,12 @@ c_stdlib:
 c_stdlib_version:
   - if: linux
     then:
-      # conda-forge's current default glibc floor. sysroot_linux-64 also ships
-      # 2.12/2.17/2.34/2.39 if you need a different one.
-      - "2.28"
+      # 2.17 (CentOS 7 era) is a PROJECT GOAL, not a default we inherited:
+      # these toolchains must run on old Linux servers. Was 2.28 until
+      # 2026-09-03. Keep in sync with ZIG_GLIBC_FLOOR in build.sh — the zig
+      # target (<arch>-linux-gnu.2.17) is what actually enforces it at link
+      # time; this variant sets the sysroot headers + run-export to match.
+      - "2.17"
   - if: osx
     then:
       - "11.0"

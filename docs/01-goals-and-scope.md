@@ -39,8 +39,10 @@ A build is done for a platform when all of the following hold on that platform:
 2. `pixi run smoke` installs them into a fresh prefix and compiles, links and
    runs every program in `tests/` with correct output.
 3. `flang --version` reports the expected LLVM version.
-4. On Linux, the produced binaries have a glibc floor no higher than the conda
-   sysroot's (2.28) — verifiable with
+4. On Linux, the produced binaries require **glibc ≤ 2.17** (CentOS 7 era).
+   Running on old Linux servers with old OSes is one of this project's most
+   important goals — the floor is enforced at build time by the
+   `check_glibc_ceiling` tripwire (see docs/13) and verifiable by hand with
    `objdump -T flang | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1`.
 
 **But the real bar is r-zig-pixi's own suite**, which is what catches the bugs

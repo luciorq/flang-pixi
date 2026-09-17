@@ -46,6 +46,13 @@ uv.lock
 # Local conda channel: the hand-off between build stages (multi-GB).
 channel/
 output/
+# Standalone rattler-build output dirs for cross/emulated targets. On gamma
+# aarch64out is a SYMLINK to /data/gamma/... (root disk too small for build
+# trees — docs/10 2026-09-04); armout/osx64out are their kappa/omicron
+# equivalents, listed here so the same .gitignore works on every host.
+aarch64out
+armout
+osx64out
 # rattler-build intermediate build trees
 .pixi/bld/
 packages/*/.pixi/

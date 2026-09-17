@@ -34,7 +34,13 @@ build:
   # makes the solver prefer these over any stale build 0 still in a channel.
   # 2: rebuilt against the lld-less llvm-zig (build 1); lld-zig also
   # reworked to a host-dep recipe with cross support + binary-only payload.
-  number: 2
+  # 4: rebuilt for the zig-feedstock glibc-baseline incident + resilience
+  # work: explicit glibc floor in the zig target, ceiling tripwire,
+  # zig-toolchain record file, zig pinned to exact version. See docs/13.
+  # 5: glibc floor LOWERED to 2.17 (CentOS 7 era) — supporting old Linux
+  # servers is a project goal; c_stdlib_version + ZIG_GLIBC_FLOOR moved
+  # together. Ceiling tripwire now enforces <=2.17. See docs/13.
+  number: 5
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -55,7 +61,15 @@ requirements:
     - if: target_platform == "win-arm64"
       then:
         - zig_win-64 0.16.*
-      else:
+    # linux-aarch64 cross from linux-64: same hosted-cross story as
+    # win-arm64 — use the build platform's proven zig; the build scripts'
+    # glibc-floor block keys off target_platform and passes
+    # --target=aarch64-linux-gnu.<floor> explicitly.
+    - if: target_platform == "linux-aarch64"
+      then:
+        - zig_linux-64 0.16.0.*
+    - if: target_platform != "win-arm64" and target_platform != "linux-aarch64"
+      then:
         - ${{ compiler('zig') }}
     - ${{ stdlib('c') }}
     - cmake >=3.28

@@ -114,6 +114,38 @@ else
   fi
 fi
 
+# Explicit glibc floor in the zig target — appended AFTER the blocks above so
+# these -D values win (CMake takes the last occurrence). The conda-forge zig
+# wrapper's implicit baseline changes between feedstock builds (2.31 in 13 →
+# 2.17 in 15); these runtime archives get linked into END USERS' programs
+# under whatever zig build is current then, so of the four packages this one
+# needs the pinned floor most. Same block in all four; rationale in
+# llvm-zig/recipe/build.sh and docs/13.
+if [[ "${target_platform}" == linux-* ]]; then
+  case "${target_platform}" in
+    linux-64)      _zigarch=x86_64 ;;
+    linux-aarch64) _zigarch=aarch64 ;;
+  esac
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  ZIG_LINUX_ABI_TARGET="${_zigarch}-linux-gnu.${ZIG_GLIBC_FLOOR}"
+  CMAKE_EXTRA+=(
+    "-DCMAKE_C_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_CXX_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+    "-DCMAKE_ASM_COMPILER_TARGET=${ZIG_LINUX_ABI_TARGET}"
+  )
+  # NOTE: no CMAKE_Fortran_FLAGS here — the `.2.17` triple suffix is
+  # zig-specific syntax; flang gets its (unversioned) target elsewhere.
+
+  # Pre-warm zig's global cache for this target BEFORE CMake runs. The
+  # first-ever compile for a new -target builds zig's libc++/glibc stubs;
+  # letting that happen inside CMake's compiler-feature detection has
+  # (twice) corrupted the generated CMakeCXXCompiler.cmake with interleaved
+  # output. One throwaway compile+link takes the cold path out of band.
+  echo 'int main(){return 0;}' > "${SRC_DIR}/.zig-warmup.cpp"
+  "${ZIG_CXX}" --target="${ZIG_LINUX_ABI_TARGET}" "${SRC_DIR}/.zig-warmup.cpp" \
+    -o "${SRC_DIR}/.zig-warmup.out" || true
+fi
+
 # macOS: zig links conda-forge's libcxx DYNAMICALLY and injects no LC_RPATH —
 # libflang_rt.runtime.dylib needs the rpath or it aborts at load. Same story
 # and fix as llvm-zig/flang-zig; libcxx is a host dep on osx in recipe.yaml.
@@ -154,13 +186,26 @@ fi
 # effect on flang-zig/recipe/build.sh). The various COMPILER_RT_BUILD_*=OFF
 # flags below skip sanitizers/XRay/memprof/profiling/ORC/libFuzzer — none of
 # it needed to link a Fortran program, all of it adds build time.
+# zig's `ar`/`ranlib` subcommands proved unreliable under Rosetta (osx-64:
+# every archive create fails with "unable to open ... No such file or
+# directory" while llvm-ar from our own llvm-zig works — docs/10
+# 2026-09-04). llvm-zig is in the prefix for this stage anyway; prefer its
+# llvm-ar/llvm-ranlib. BUILD_PREFIX first: on cross builds the PREFIX one
+# is a foreign-arch binary.
+AR_BIN="${ZIG_AR}"; RANLIB_BIN="${ZIG_RANLIB}"
+for _p in "${BUILD_PREFIX}" "${PREFIX}"; do
+  if [[ -x "${_p}/bin/llvm-ar" ]]; then
+    AR_BIN="${_p}/bin/llvm-ar"; RANLIB_BIN="${_p}/bin/llvm-ranlib"; break
+  fi
+done
+
 cmake -G Ninja -S runtimes -B build \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"} \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
   -DCMAKE_CXX_COMPILER="${ZIG_CXX}" \
   -DCMAKE_ASM_COMPILER="${ZIG_CC}" \
-  -DCMAKE_AR="${ZIG_AR}" \
-  -DCMAKE_RANLIB="${ZIG_RANLIB}" \
+  -DCMAKE_AR="${AR_BIN}" \
+  -DCMAKE_RANLIB="${RANLIB_BIN}" \
   -DCMAKE_Fortran_COMPILER="${FLANG_BIN}" \
   -DCMAKE_Fortran_COMPILER_WORKS=yes \
   -DCMAKE_BUILD_TYPE=Release \
@@ -202,6 +247,24 @@ cmake --install build
 rtdir="$(dirname "$(find "${PREFIX}/lib/clang/${MAJOR_VER}/lib" -name 'libflang_rt.runtime.a' -print -quit)")"
 test -n "${rtdir}" || { echo "ERROR: could not locate libflang_rt.runtime.a" >&2; exit 1; }
 echo "flang-rt installed under: ${rtdir}"
+
+# Cross builds name that triple dir after the BUILD machine (observed:
+# linux-aarch64 runtime landing in x86_64-unknown-linux-gnu/ — the binaries
+# inside are correct target-arch, only the directory is wrong). The flang
+# driver resolves the runtime by the TARGET triple, so rename to it.
+case "${target_platform}" in
+  linux-64)      _rt_triple=x86_64-unknown-linux-gnu ;;
+  linux-aarch64) _rt_triple=aarch64-unknown-linux-gnu ;;
+  *)             _rt_triple="" ;;
+esac
+if [[ -n "${_rt_triple}" && "$(basename "${rtdir}")" != "${_rt_triple}" ]]; then
+  _rt_parent="$(dirname "${rtdir}")"
+  if [[ ! -e "${_rt_parent}/${_rt_triple}" ]]; then
+    mv "${rtdir}" "${_rt_parent}/${_rt_triple}"
+    rtdir="${_rt_parent}/${_rt_triple}"
+    echo "renamed clang resource dir to target triple: ${rtdir}"
+  fi
+fi
 
 ln -sf "${rtdir}/libflang_rt.runtime.a" "${PREFIX}/lib/libflang_rt.runtime.a"
 if [[ -f "${rtdir}/libflang_rt.runtime.so" ]]; then
@@ -256,6 +319,10 @@ fi
 # *inputs* for programs built later; stripping their symbols could break
 # that linking. See docs/10-status-log.md.
 STRIP_BIN="${PREFIX}/bin/llvm-strip"
+# Cross builds: PREFIX's llvm-strip is a target-arch binary that cannot run
+# here; the native one in BUILD_PREFIX (present only when cross) can strip
+# foreign-arch ELFs fine.
+[[ -x "${BUILD_PREFIX}/bin/llvm-strip" ]] && STRIP_BIN="${BUILD_PREFIX}/bin/llvm-strip"
 if [[ -x "${STRIP_BIN}" ]]; then
   echo "== stripping shared libraries with ${STRIP_BIN} =="
   find "${PREFIX}/lib" -name '*.so*' -type f -print0 | while IFS= read -r -d '' f; do
@@ -264,3 +331,37 @@ if [[ -x "${STRIP_BIN}" ]]; then
 else
   echo "WARNING: llvm-strip not found at ${STRIP_BIN}, skipping strip pass" >&2
 fi
+
+# Build-time tripwire for zig-feedstock glibc-baseline drift (docs/13): fail
+# here, loudly, if anything we ship requires glibc newer than the declared
+# floor — not at some future consumer's link.
+check_glibc_ceiling() {
+  local f="$1" od="" cand ceil
+  for cand in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump" objdump; do
+    command -v "$cand" >/dev/null 2>&1 && { od="$cand"; break; }
+  done
+  [[ -z "$od" ]] && { echo "WARNING: no objdump; skipping glibc ceiling check for $f" >&2; return 0; }
+  ceil=$("$od" -T "$f" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+  [[ -z "$ceil" ]] && return 0
+  if [[ "$(printf '%s\n' "$ceil" "${ZIG_GLIBC_FLOOR}" | sort -V | tail -1)" != "${ZIG_GLIBC_FLOOR}" ]]; then
+    echo "ERROR: $f requires GLIBC_${ceil} > declared floor ${ZIG_GLIBC_FLOOR} — zig baseline drift? see docs/13" >&2
+    exit 1
+  fi
+  echo "glibc ceiling OK: $f (${ceil} <= floor ${ZIG_GLIBC_FLOOR})"
+}
+if [[ "${target_platform}" == linux-* ]]; then
+  ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
+  # The real .so lives in the clang resource dir; lib/libflang_rt.runtime.so
+  # is a symlink to it (which the -L test skips) — glob both locations.
+  for c in "${PREFIX}"/lib/libflang_rt*.so* "${PREFIX}"/lib/clang/*/lib/*/libflang_rt*.so*; do
+    [[ -f "$c" && ! -L "$c" ]] && check_glibc_ceiling "$c"
+  done
+fi
+
+# Record the exact zig toolchain this package was built with — the audit
+# trail for zig-feedstock coupling issues (docs/13).
+mkdir -p "${PREFIX}/share/flang-rt-zig"
+{
+  echo "zig_conda_package=$(ls "${BUILD_PREFIX}"/conda-meta/zig*_*.json 2>/dev/null | xargs -rn1 basename | tr '\n' ' ')"
+  echo "zig_abi_target=${ZIG_LINUX_ABI_TARGET:-wrapper-default}"
+} > "${PREFIX}/share/flang-rt-zig/zig-toolchain.txt"

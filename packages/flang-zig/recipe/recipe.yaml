@@ -13,11 +13,11 @@
 # Fortran compiler, which is the thing this stage produces. Stage 3 closes that
 # loop.
 #
-# NOT YET COMPILED. See docs/10-status-log.md.
+# Build history and per-platform status: docs/10-status-log.md.
 
 context:
-  version: "22.1.8"
-  major: "22"
+  version: "23.1.1"
+  major: "23"
 
 package:
   name: flang-zig
@@ -25,7 +25,7 @@ package:
 
 source:
   url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
-  sha256: ad18b70e287954c3d62bc7e0b86e7b7af2adf87bcfce21c15fe717f101d7aace
+  sha256: 851b3d701a4fbdd9f69536d4acda578469e810ca7056687d6556443f5fd39557
 
 build:
   # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
@@ -42,7 +42,10 @@ build:
   # 5: glibc floor LOWERED to 2.17 (CentOS 7 era) — supporting old Linux
   # servers is a project goal; c_stdlib_version + ZIG_GLIBC_FLOOR moved
   # together. Ceiling tripwire now enforces <=2.17. See docs/13.
-  number: 5
+  # 0: LLVM 23.1.1 generation (2026-09-17). Decision: the 22.1.8 chain is
+  # never published (prefix.dev storage); 23.x is the first published
+  # generation. Build numbers restart at 0 with the new version.
+  number: 0
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:
@@ -62,10 +65,10 @@ requirements:
     # win-arm64 — use the build platform's proven zig; the build scripts'
     # glibc-floor block keys off target_platform and passes
     # --target=aarch64-linux-gnu.<floor> explicitly.
-    - if: target_platform == "linux-aarch64"
+    - if: target_platform == "linux-aarch64" and build_platform == "linux-64"
       then:
         - zig_linux-64 0.16.0.*
-    - if: target_platform != "win-arm64" and target_platform != "linux-aarch64"
+    - if: target_platform != "win-arm64" and (target_platform != "linux-aarch64" or build_platform == "linux-aarch64")
       then:
         - ${{ compiler('zig') }}
     - ${{ stdlib('c') }}
@@ -79,7 +82,7 @@ requirements:
     # NOTE: `build_platform != target_platform` never fires through the
     # pixi-build backend (it reports build == target even for cross);
     # condition on the concrete cross target instead.
-    - if: target_platform == "win-arm64" or target_platform == "linux-aarch64"
+    - if: build_platform != target_platform
       then:
         - llvm-zig ==${{ version }}
   host:

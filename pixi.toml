@@ -26,7 +26,7 @@ preview = ["pixi-build"]
 # of truth for binary dependencies when using pixi-build-rattler-build).
 # ---------------------------------------------------------------------------
 [dependencies]
-rattler-build = ">=0.52"
+rattler-build = ">=0.76"
 python = ">=3.12"
 
 # ---------------------------------------------------------------------------

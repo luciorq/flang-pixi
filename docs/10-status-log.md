@@ -39,31 +39,135 @@ yet run since it lives in a different repository).
 
 ## Next actions, in order
 
-*(rewritten 2026-09-05 — all six platform chains now exist; the original
-platform bring-up list is done)*
+*(rewritten 2026-09-17 after the landscape review in
+[15-landscape-review-2026-09.md](15-landscape-review-2026-09.md))*
 
-1. **Publish to prefix.dev `universe`** — fully staged, blocked only on a
-   `pfx_…` API key from the user. Runbook with exact per-host commands and
-   file lists: [14-publishing-runbook.md](14-publishing-runbook.md).
-2. **Post-publish proof**: point the r-zig-pixi validation worktree at the
-   published channel (drop the file:// entry), re-run `pixi run build` +
-   `check` once.
-3. **Upstream r-zig-pixi changes**: the validation worktree
-   (`flang-zig-validation` branch) holds an uncommitted glibc-ceiling
-   check for `scripts/verify-bundle.sh` + the 2.17-generation lock —
-   cherry-pick into the main branch when the user is ready.
-4. **Hardware validation** for the two built-but-unvalidated targets:
-   linux-aarch64 (any arm64 Linux box or qemu binfmt) and win-arm64
-   (arm64 Windows machine).
-5. **r-zig validation on the other platforms** — osx-64 can run today on
-   omicron under Rosetta (same trick as the smoke test); osx-arm64 and
-   win-64 need their r-zig runs too. `lapack.R` is the bar.
-6. Optional/deferred: publish llvm-zig (needs a size/quota decision);
-   the five upstream reports in [12](12-upstream-reports.md) are drafted
-   but deliberately NOT filed (user decision 2026-09-04: workarounds
-   only, no upstreaming for now).
+1. **Finish the 23.1.1 chains** (linux-64 on gamma, osx-arm64 then osx-64
+   on omicron, win-64 then win-arm64 cross on kappa, linux-aarch64 native
+   on GHA), smoke each, then **publish the 23.1.1 consumer set** per
+   [14](14-publishing-runbook.md) (file lists there are 22.1.8 — regenerate).
+   22.1.8 is never published (decision 2026-09-17). Then delete the 22.x
+   packages from the local channels.
+2. **Teach r-zig-pixi to consume flang-zig off linux-64** — this is now
+   the critical path. Its `build.zig` (`fortranOne`, `findFlangRt`,
+   `linkFortranRt`) dispatches flang only on linux-x86_64; osx-*,
+   linux-aarch64 and win-64 need flang branches, a cross-platform
+   resource-dir search, and the `flang_rt.runtime` link. Then run
+   `lapack.R` at -O2 on osx-arm64 (the platform this project exists for),
+   osx-64 (Rosetta on omicron) and win-64. Rebase the
+   `flang-zig-validation` worktree first (3 commits behind main,
+   uncommitted lock/pixi.toml/verify-bundle changes).
+3. **osx-arm64 parity vs CRAN's experimental flang 23** (mac.r-project.org
+   `/opt/R/flang-23`): same tests, both compilers, diff.
+4. **Hardware/emulated validation** of linux-aarch64 (qemu-user binfmt on
+   gamma, or an `ubuntu-24.04-arm` runner) and win-arm64
+   (`windows-11-arm` runner).
+5. **First GHA run**: add `PREFIX_API_KEY` secret, push, dispatch with
+   defaults (census + linux-aarch64), read the census numbers, then try
+   `targets: linux-64` once to measure stage 1 on a 4-core runner (docs/08).
+6. One informational run: gfortran 16.2 at -O2 on omicron `lapack.R`.
+7. Upstream r-zig-pixi's verify-bundle glibc-ceiling check.
+8. Optional/deferred: publish llvm-zig (size decision); the five drafts
+   in [12](12-upstream-reports.md) stay unfiled unless the user changes
+   that decision.
 
 ---
+
+## 2026-09-17 — landscape review; no builds run; docs refreshed
+
+**Decisions taken later the same day (user):**
+- `llvm-zig` is never published (confirmed).
+- The **22.1.8 chain is NOT published** — prefix.dev storage. **LLVM 23.x is
+  the first published generation.** All four recipes bumped to 23.1.1
+  (tarball sha256 851b3d70…, same as conda-forge flang-feedstock 23.1.1),
+  build numbers reset to 0. Checked against the 23.1.1 tree: the MinGW
+  RTBuilder.h `_MSC_VER` guard is unchanged (patch still needed), the osx
+  `-exported_symbols_list` and `-sectcreate` seds still match; the
+  `NOT APPLE AND ARG_SONAME` sed no longer matches (harmless no-op, static
+  build). linux-64 stage 1 at 23.1.1 started on gamma
+  (log: /data/gamma/luciorq/workspaces/temp/logs/llvm-zig-23.1.1-linux-64.log).
+- The repository is public on GitHub → **hybrid CI decided** (assessment
+  in docs/08): GHA is the production path for linux-aarch64 (native on
+  `ubuntu-24.04-arm`), win-arm64 validation (`windows-11-arm`), publishing
+  and PR gates; gamma/omicron/kappa stay primary for linux-64, osx-*,
+  win-64 until a measured GHA stage 1 fits the 6 h cap. osx-arm64 runners
+  (3 cores, 7 GB) are a poor fit for the highest-value target.
+
+**Done later the same day:**
+- Recipes: cross conditionals switched to `build_platform != target_platform`
+  (native tblgen dep) and `... and build_platform == "linux-64"` (zig_linux-64),
+  so a *native* linux-aarch64 build renders `zig_linux-aarch64` and no
+  llvm-zig build dep; cross renders unchanged. Verified with
+  `rattler-build --render-only` for native-aarch64 / cross / linux-64.
+- New workflow `.github/workflows/build.yml` + composite action
+  `.github/actions/stage` + `scripts/ci-smoke.sh` (docs/08). Lints clean
+  (actionlint). NOT yet run — needs a push and the `PREFIX_API_KEY` secret.
+  Workspace `rattler-build` requirement raised to `>=0.76` (lock updated
+  0.72.2 → 0.76.1; CI drives standalone rattler-build through `pixi run`).
+- **linux-64 llvm-zig 23.1.1 built on gamma in 36 min**
+  (`zig_f1366af_0`, 840 MB). lld → flang → flang-rt → smoke queued via
+  `/data/gamma/luciorq/workspaces/temp/logs/chain-linux-64.sh`
+  (status file `chain-linux-64.status`, per-stage logs alongside).
+- omicron: 151 GB of 22.x work trees removed (`packages/*/.pixi/bld`),
+  254 GB free; recipes/docs synced (rsync); osx-arm64 llvm-zig 23.1.1
+  started (first attempt died downloading the tarball, "error decoding
+  response body"; retried). Log: `/tmp/flang-pixi-logs/llvm-zig-23.1.1-osx-arm64.log`.
+- kappa: **network is normal again** (github ~5–10 MB/s, gamma→kappa 6.5
+  MB/s — the Sept-3 throttling was transient); pixi replaced with the
+  official 0.81.0 binary (conda-forge build cannot self-update; backup
+  `pixi-0.79.0-backup.exe`); 33 GB of stale trees + armout 22.1.8 src cache
+  being removed by `C:\Users\admin\kappa-clean-build.ps1`, which then fires
+  the `flangbuild` SYSTEM task (= `pixi run build-llvm`, log
+  `build-llvm-win.log`). Recipes synced via tar-over-ssh.
+- prefix.dev API key stored on all three hosts (`~/.rattler/credentials.json`
+  / `C:\Users\admin\.rattler\credentials.json`). Tools: pixi 0.81.0 +
+  rattler-build 0.76.1 everywhere.
+- Still to clean once the 23 chains smoke-pass: the 22.x packages in every
+  local `channel/` (gamma 5.5 GB, omicron 2.2 GB, kappa 4.1 GB) and
+  gamma's `aarch64out` (2.1 GB). Kept for now — they are the only working
+  toolchain until 23 is validated.
+
+Review-only session (see [15](15-landscape-review-2026-09.md) for the full
+write-up and sources). Nothing was built, published or changed on
+omicron/kappa (ssh agent not loaded; both unreachable this session).
+
+Measured externally:
+- conda-forge `flang` 23.1.1: linux-64, win-64, **win-arm64** (new, PR #139
+  merged 2026-08-29, MSVC ABI). Still `skip: true # [osx]`, still no
+  linux-aarch64. `llvmdev`/`clangdev`/`mlir` 23.1.1 on every subdir.
+- **CRAN offers an experimental LLVM flang 23.1.0 for the arm64 sonoma
+  R-devel** and expects R 4.7.0's sonoma build to use it. R 4.6 still
+  gfortran 14.2. This validates the osx-arm64 priority and gives that
+  platform a reference build for the first time.
+- LLVM 23.1.1 released 2026-09-08; we are on 22.1.8.
+- zig 0.16.0 remains the only release; conda-forge 0.17.0 packages are
+  `zig_dev`-label only. Pin stays.
+- zig-feedstock 0.16.0 **build 17** (2026-09-15) rewrote the wrappers in
+  C. Re-verified from source: `-stdlib=` still stripped (ADR-1 holds);
+  explicit `-target` still wins over the injected default; linux default
+  glibc is now explicitly 2.17; `zig_win-64` still defaults to
+  `x86_64-windows-msvc`; native `zig_win-arm64` closed as not planned
+  (issue #179). MinGW CRT generation was reworked — next Windows rebuild
+  must refresh flang-rt-zig's CRT snapshot in the same wave.
+- `zig-compiler` metapackage exists; ocaml-feedstock PR #103 (draft) adds
+  zig as a Windows compiler axis; no pinning entry, no CFEP.
+- gfortran 16.2.0 on conda-forge for osx-arm64 (untested vs the zgesdd
+  miscompile).
+- prefix.dev `universe`: only `r-zig-slim` (linux-64/osx-arm64/win-64);
+  no flang-zig anywhere; no win-arm64 subdir yet.
+
+Measured locally:
+- `~/.rattler/credentials.json` on gamma rewritten 2026-09-17 08:23 with a
+  `pfx-…` key; GraphQL `viewer` authenticates as luciorq. Publishing
+  should be unblocked on gamma; not attempted this session.
+- r-zig-pixi main moved to a pure `zig build` pipeline (b8132f7,
+  2026-09-05, + linux-aarch64/osx-64 support); flang is dispatched only on
+  linux-x86_64 in `build.zig`. Consumer-side work is now the critical path.
+- gamma root disk 138 GB free; pixi 0.81.0, rattler-build 0.76.1.
+
+Docs: README and docs/README status banners still claimed nothing had been
+compiled — replaced. docs/README index now lists 12–15. Recipe header
+comments "NOT YET COMPILED" removed.
 
 ## 2026-09-05 — publishing to prefix.dev staged and attempted; BLOCKED on a real API key; session wrapped
 

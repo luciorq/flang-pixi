@@ -6,7 +6,14 @@ channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: staged, BLOCKED on auth
+## Status: SUPERSEDED for 22.1.8 (never published — decision 2026-09-17); reuse the procedure for 23.1.1
+
+The `pfx-…` API key is now stored on all three hosts (2026-09-17). The
+file lists below are the 22.1.8 generation and must be regenerated for
+23.1.1 (`ls channel/<subdir>/*23.1.1*`). The GHA workflow's `publish` job
+(docs/08) can do the same upload from artifacts.
+
+### Original status (2026-09-05): staged, BLOCKED on auth
 
 Everything below was attempted on 2026-09-05 and failed only on
 authentication. The `~/.rattler/credentials.json` on gamma/omicron holds a

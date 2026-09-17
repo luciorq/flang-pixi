@@ -4,11 +4,12 @@ Build LLVM Flang for Linux, macOS and Windows using the conda-forge `zig cc` /
 `zig c++` toolchain, packaged with Pixi and the `pixi-build-rattler-build`
 backend.
 
-**Nothing has been compiled yet.** The repository structure, recipes and this
-documentation exist so that the first compile attempt starts from a reasoned
-position rather than trial and error. [`10-status-log.md`](10-status-log.md) is
+**All six platform chains are built (2026-09); publishing and the r-zig-pixi
+consumer wiring are what remain.** [`10-status-log.md`](10-status-log.md) is
 the single source of truth for what has actually been executed and what its
-result was — read it first if you are picking this up in a new session.
+result was — read it first if you are picking this up in a new session, then
+[`15-landscape-review-2026-09.md`](15-landscape-review-2026-09.md) for the
+current assessment of what is still needed and what can change.
 
 ## Read in this order
 
@@ -25,6 +26,10 @@ result was — read it first if you are picking this up in a new session.
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Everything expected to go wrong, with mitigations |
 | 10 | [Status log](10-status-log.md) | **Append-only record of what has been run.** Update this every session |
 | 11 | [r-zig-pixi integration](11-r-zig-integration.md) | **Who this is for and what they need.** Drives prioritisation |
+| 12 | [Upstream reports](12-upstream-reports.md) | Drafted, deliberately not filed |
+| 13 | [zig-feedstock coupling](13-zig-feedstock-coupling.md) | glibc 2.17 floor, ceiling tripwire, why feedstock rebuilds can break links |
+| 14 | [Publishing runbook](14-publishing-runbook.md) | Exact per-host upload commands for prefix.dev `universe` |
+| 15 | [Landscape review 2026-09](15-landscape-review-2026-09.md) | **What changed outside the project, what is still needed, what can change** |
 
 ## The thirty-second version
 

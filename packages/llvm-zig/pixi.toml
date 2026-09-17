@@ -16,7 +16,7 @@ preview = ["pixi-build"]
 
 [package]
 name = "llvm-zig"
-version = "22.1.8"
+version = "23.1.1"
 
 [package.build]
 # `backend.channels` is where the BUILD BACKEND package itself is fetched from.

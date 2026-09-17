@@ -15,7 +15,7 @@ preview = ["pixi-build"]
 
 [package]
 name = "flang-rt-zig"
-version = "22.1.8"
+version = "23.1.1"
 
 [package.build]
 # `backend.channels` is only where the build backend package is fetched from.

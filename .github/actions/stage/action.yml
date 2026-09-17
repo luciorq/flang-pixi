@@ -1,0 +1,79 @@
+name: build one stage
+description: >
+  Restore the channel artifact into $OUT/<subdir>, build one package with
+  standalone rattler-build, re-upload the subdir. Used by every stage job.
+
+inputs:
+  package:        { required: true }
+  target:         { required: true }
+  build_platform: { required: false, default: "" }
+  artifact:       { required: true }
+  extra_artifact: { required: false, default: "" }
+  restore:        { required: false, default: "true" }
+  test:           { required: false, default: "native" }   # native | skip
+  extra_env:      { required: false, default: "" }          # KEY=VALUE
+
+runs:
+  using: composite
+  steps:
+    - name: free disk space (linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af >/dev/null 2>&1 || true
+        df -h .
+
+    - uses: prefix-dev/setup-pixi@v0.10.2
+      with:
+        cache: true          # the workspace env: rattler-build + python
+
+    - uses: actions/download-artifact@v4
+      if: inputs.restore == 'true'
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ env.OUT }}
+
+    - uses: actions/download-artifact@v4
+      if: inputs.extra_artifact != ''
+      with:
+        name: ${{ inputs.extra_artifact }}
+        path: ${{ env.OUT }}
+
+    - name: rattler-build ${{ inputs.package }} → ${{ inputs.target }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${{ inputs.extra_env }}" ]; then export "${{ inputs.extra_env }}"; fi
+        # rattler-build wants the local channel to exist even on the first stage
+        for sd in noarch ${{ inputs.target }} ${{ inputs.build_platform }}; do
+          [ -n "$sd" ] || continue
+          mkdir -p "$OUT/$sd"
+          [ -f "$OUT/$sd/repodata.json" ] || printf '{"info":{"subdir":"%s"},"packages":{},"packages.conda":{}}' "$sd" > "$OUT/$sd/repodata.json"
+        done
+        chan="file://$(pwd)/$OUT"
+        case "$RUNNER_OS" in Windows) chan="file:///$(cygpath -m "$(pwd)")/$OUT";; esac
+        bp=""; [ -n "${{ inputs.build_platform }}" ] && bp="--build-platform ${{ inputs.build_platform }}"
+        pixi run -- rattler-build build \
+          --recipe packages/${{ inputs.package }}/recipe/recipe.yaml \
+          --variant-config packages/${{ inputs.package }}/recipe/variants.yaml \
+          --target-platform ${{ inputs.target }} $bp \
+          --test ${{ inputs.test }} \
+          -c "$chan" -c conda-forge \
+          --output-dir "$OUT"
+        ls -la "$OUT/${{ inputs.target }}"
+
+    - name: drop work trees before upload
+      if: always()
+      shell: bash
+      run: rm -rf "$OUT/bld" "$OUT/src_cache" || true
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ${{ inputs.artifact }}
+        path: |
+          ${{ env.OUT }}/${{ inputs.target }}
+          ${{ env.OUT }}/noarch
+        retention-days: 14
+        overwrite: true

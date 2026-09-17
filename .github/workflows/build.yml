@@ -1,164 +1,286 @@
 name: build
 
-# Nothing here has been run yet. See docs/08-ci.md for the reasoning behind the
-# matrix and docs/10-status-log.md for what has actually been executed.
+# Phase 1 of the GitHub-hosted-runner plan (docs/08-ci.md, docs/15 §3):
+#
+#   census   — every runner label: cores / RAM / free disk + the stage-0 zig probe
+#   stages   — llvm → lld → flang → flang-rt → smoke, one job per stage per
+#              target, channel/ handed between jobs as an artifact
+#   win-arm64 cross-built on windows-2025 from the win-64 artifacts, validated
+#              on windows-11-arm
+#   publish  — manual only, consumer set only (never llvm-zig), needs
+#              secrets.PREFIX_API_KEY
+#
+# Which targets actually build is an input (default: linux-aarch64 — the one
+# platform GHA gives us that we have no hardware for). Building the x86/macOS
+# targets here is a measurement exercise first (docs/15 §2.9 / docs/08).
+#
+# Everything is driven by standalone rattler-build, NOT `pixi publish`:
+# pixi publish panics on cross targets (docs/12 draft 1) and the pixi-build
+# backend reports build_platform == target_platform even when cross.
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+    inputs:
+      targets:
+        description: "Comma-separated targets to build: linux-64,linux-aarch64,osx-64,osx-arm64,win-64,win-arm64"
+        default: "linux-aarch64"
+        type: string
+      publish:
+        description: "Upload lld/flang/flang-rt of the built targets to prefix.dev universe"
+        default: false
+        type: boolean
+      skip_census:
+        description: "Skip the census/probe jobs"
+        default: false
+        type: boolean
   pull_request:
+    paths: ["packages/**", "scripts/**", "tests/**", "pixi.toml", ".github/workflows/build.yml"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # rattler-build puts packages in <out>/<subdir>/ and work trees in <out>/bld/,
+  # <out>/src_cache/. Only the subdirs are uploaded as the channel artifact.
+  OUT: build-out
+
 jobs:
   # ---------------------------------------------------------------------------
-  # Stage 0. Fast, cheap, and it gates everything else: if `zig c++` cannot
-  # compile a C++17 program on a runner, there is no point spending six hours
-  # discovering that inside an LLVM build.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      has_win_arm64: ${{ steps.m.outputs.has_win_arm64 }}
+    steps:
+      - id: m
+        shell: python
+        run: |
+          import json, os
+          runners = {
+            "linux-64":      "ubuntu-24.04",
+            "linux-aarch64": "ubuntu-24.04-arm",
+            "osx-64":        "macos-15-intel",
+            "osx-arm64":     "macos-15",
+            "win-64":        "windows-2025",
+          }
+          # workflow_dispatch: the input (default linux-aarch64). pull_request: no
+          # stage builds, only census/probe — an LLVM chain per PR is too much.
+          raw = "${{ inputs.targets }}"
+          wanted = [t.strip() for t in raw.split(",") if t.strip()]
+          has_arm = "win-arm64" in wanted
+          if has_arm and "win-64" not in wanted:
+              wanted.append("win-64")   # cross needs the native win-64 toolchain
+          native = [t for t in wanted if t in runners]
+          bad = [t for t in wanted if t not in runners and t != "win-arm64"]
+          assert not bad, f"unknown targets {bad}"
+          m = {"include": [{"target": t, "runner": runners[t],
+                            "shell": "pwsh" if t.startswith("win") else "bash"} for t in native]}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(m)}\n")
+              f.write(f"has_win_arm64={'true' if has_arm else 'false'}\n")
+
   # ---------------------------------------------------------------------------
-  probe:
-    name: probe (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+  census:
+    if: ${{ !inputs.skip_census }}
+    name: census (${{ matrix.label }})
+    runs-on: ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-64,  runner: ubuntu-latest }
-          - { target: osx-64,    runner: macos-13 }
-          - { target: osx-arm64, runner: macos-14 }
-          - { target: win-64,    runner: windows-latest }
+          - { label: ubuntu-24.04,      probe: true }
+          - { label: ubuntu-24.04-arm,  probe: true }
+          - { label: macos-15-intel,    probe: true }
+          - { label: macos-15,          probe: true }
+          - { label: windows-2025,      probe: true }
+          - { label: windows-11-arm,    probe: false }   # no zig_win-arm64 in the win-arm64 subdir
     steps:
       - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0.8.14
+      - name: hardware
+        shell: bash
+        run: |
+          echo "## ${{ matrix.label }}" >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; uname -a
+            nproc 2>/dev/null || sysctl -n hw.ncpu
+            (free -g 2>/dev/null || sysctl -n hw.memsize 2>/dev/null || wmic ComputerSystem get TotalPhysicalMemory) | head -3
+            df -h . 2>/dev/null || true
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: free disk space (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          echo "after cleanup:" | tee -a "$GITHUB_STEP_SUMMARY"; df -h . | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        if: matrix.probe
         with:
           environments: zig-probe
           cache: true
       - name: probe
-        if: runner.os != 'Windows'
+        if: matrix.probe && runner.os != 'Windows'
         run: pixi run probe
       - name: probe (windows)
-        if: runner.os == 'Windows'
+        if: matrix.probe && runner.os == 'Windows'
         run: pixi run probe-win
 
   # ---------------------------------------------------------------------------
-  # Stages 1-3, natively, one job per target.
-  #
-  # These are long. GitHub-hosted runners cap a job at 6 hours; if stage 1 alone
-  # approaches that, split it into its own job and pass ./channel between jobs
-  # as an artifact. See docs/08-ci.md.
+  # Native stages. Each job restores the previous stage's channel artifact into
+  # $OUT/<subdir>, builds one recipe with standalone rattler-build (which
+  # re-indexes the subdir), and uploads the subdir again.
   # ---------------------------------------------------------------------------
-  build:
-    name: build (${{ matrix.target }})
-    needs: probe
+  llvm:
+    name: 1 llvm-zig (${{ matrix.target }})
+    needs: [plan]
+    if: ${{ needs.plan.outputs.matrix != '{"include":[]}' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 350
+    timeout-minutes: 355
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { target: linux-64,  runner: ubuntu-latest }
-          - { target: osx-64,    runner: macos-13 }
-          - { target: osx-arm64, runner: macos-14 }
-          - { target: win-64,    runner: windows-latest }
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0.8.14
+      - uses: ./.github/actions/stage
         with:
-          cache: true
+          package: llvm-zig
+          target: ${{ matrix.target }}
+          artifact: channel-${{ matrix.target }}
+          restore: "false"
 
-      - name: free disk space (linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h
+  lld:
+    name: 1.5 lld-zig (${{ matrix.target }})
+    needs: [plan, llvm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/stage
+        with:
+          package: lld-zig
+          target: ${{ matrix.target }}
+          artifact: channel-${{ matrix.target }}
 
-      - name: stage 1 — llvm-zig
-        run: pixi run build-llvm
+  flang:
+    name: 2 flang-zig (${{ matrix.target }})
+    needs: [plan, lld]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/stage
+        with:
+          package: flang-zig
+          target: ${{ matrix.target }}
+          artifact: channel-${{ matrix.target }}
+          # 7 GB macOS arm64 runners: one flang TU at a time (docs/09 R2).
+          extra_env: ${{ matrix.target == 'osx-arm64' && 'FLANG_PARALLEL_COMPILE_JOBS=1' || '' }}
 
-      - name: stage 2 — flang-zig
-        run: pixi run build-flang
+  flang-rt:
+    name: 3 flang-rt-zig (${{ matrix.target }})
+    needs: [plan, flang]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/stage
+        with:
+          package: flang-rt-zig
+          target: ${{ matrix.target }}
+          artifact: channel-${{ matrix.target }}
 
-      - name: stage 3 — flang-rt-zig
-        run: pixi run build-flang-rt
-
-      - name: smoke test
-        if: runner.os != 'Windows'
-        run: pixi run smoke
-
-      - uses: actions/upload-artifact@v4
-        if: always()
+  smoke:
+    name: smoke (${{ matrix.target }})
+    needs: [plan, flang-rt]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: channel-${{ matrix.target }}
-          path: channel/
-          retention-days: 14
+          path: ${{ env.OUT }}
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          run-install: false
+      - name: compile and run tests/*.f90 with the built flang
+        shell: bash
+        run: bash scripts/ci-smoke.sh "$OUT"
 
   # ---------------------------------------------------------------------------
-  # win-arm64 is cross-only: conda-forge publishes zig_win-arm64 exclusively
-  # into the win-64 subdir, so no win-arm64 machine can host its own build.
-  # This job therefore runs on windows-latest (x86_64) and cross-builds.
-  #
-  # It rewrites llvm_targets_to_build to include AArch64 before stage 1: the
-  # native win-64 flang produced here is used as CMAKE_Fortran_COMPILER for the
-  # arm64 runtime in stage 3, and an X86-only flang cannot emit arm64 code.
+  # win-arm64: cross from the win-64 artifacts (zig_win-arm64 is published only
+  # into the win-64 subdir — docs/05), validated on a real arm64 runner.
   # ---------------------------------------------------------------------------
-  build-win-arm64:
-    name: build (win-arm64, cross from win-64)
-    needs: probe
-    runs-on: windows-latest
-    timeout-minutes: 350
+  cross-win-arm64:
+    name: cross win-arm64 (${{ matrix.package }})
+    needs: [plan, flang-rt]
+    if: ${{ needs.plan.outputs.has_win_arm64 == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 355
+    strategy:
+      max-parallel: 1       # stages depend on each other through the artifact
+      matrix:
+        package: [llvm-zig, lld-zig, flang-zig, flang-rt-zig]
     steps:
       - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0.8.14
+      - uses: ./.github/actions/stage
         with:
-          cache: true
+          package: ${{ matrix.package }}
+          target: win-arm64
+          build_platform: win-64
+          artifact: channel-win-arm64
+          # the native win-64 toolchain (tblgen, flang for the runtime)
+          extra_artifact: channel-win-64
+          restore: ${{ matrix.package != 'llvm-zig' }}
+          test: skip
 
-      - name: enable AArch64 backend for the host toolchain
-        shell: pwsh
-        run: |
-          $f = "packages/llvm-zig/recipe/variants.yaml"
-          (Get-Content $f) -replace '^  - "Native"$', '  - "X86;AArch64"' | Set-Content $f
-          Get-Content $f | Select-String -Context 2 "X86;AArch64"
-
-      - name: native win-64 toolchain (needed for tblgen + the Fortran compiler)
-        run: |
-          pixi run build-llvm
-          pixi run build-flang
-
-      - name: cross-build win-arm64
-        run: pixi run build-all-winarm
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: channel-win-arm64
-          path: channel/
-          retention-days: 14
-
-  # ---------------------------------------------------------------------------
-  # A win-arm64 binary cannot run on the win-64 host that produced it, so the
-  # package tests that execute flang.exe are skipped during the cross build.
-  # This job is the only place win-arm64 is actually validated.
-  # ---------------------------------------------------------------------------
   validate-win-arm64:
-    name: validate (win-arm64)
-    needs: build-win-arm64
+    name: smoke (win-arm64)
+    needs: [cross-win-arm64]
     runs-on: windows-11-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: channel-win-arm64
-          path: channel
-      - uses: prefix-dev/setup-pixi@v0.8.14
+          path: ${{ env.OUT }}
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          cache: true
-      - name: install and run
-        shell: pwsh
+          run-install: false
+      - shell: bash
+        run: bash scripts/ci-smoke.sh "$OUT"
+
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish to prefix.dev universe
+    needs: [plan, smoke]
+    if: ${{ inputs.publish && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: channel-*
+          path: channels
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          run-install: false
+      - name: upload consumer set (never llvm-zig)
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
         run: |
-          pixi exec --channel ./channel --channel conda-forge `
-            --spec flang-zig --spec flang-rt-zig `
-            flang tests\hello.f90 -o hello.exe
-          .\hello.exe
+          set -euo pipefail
+          files=$(find channels -name '*.conda' | grep -E '/(lld-zig|flang-zig|flang-rt-zig)-' | sort)
+          echo "$files"
+          pixi exec rattler-build upload prefix --channel universe --skip-existing $files

@@ -266,6 +266,32 @@ if [[ -n "${_rt_triple}" && "$(basename "${rtdir}")" != "${_rt_triple}" ]]; then
   fi
 fi
 
+# --- intrinsic .mod files (LLVM >= 23: installed by flang-rt, not flang) ----
+# The runtimes build names lib/clang/<major>/finclude/flang/<triple>/ after
+# CMake's idea of LLVM_DEFAULT_TARGET_TRIPLE — the BUILD machine's host triple
+# (arm-apple-darwin25.4.0 on omicron, x86_64-... on an aarch64 cross), which
+# the driver never matches on macOS or cross builds (docs/10 2026-09-17).
+# Rename it to the conda triple, which flang-zig's flang.cfg passes via
+# -fintrinsic-modules-path, and keep a link under the driver's exact
+# Linux triple so the default lookup works there too.
+finc="${PREFIX}/lib/clang/${MAJOR_VER}/finclude/flang"
+if [[ -d "${finc}" ]]; then
+  _finc_src="$(find "${finc}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  if [[ -n "${_finc_src}" && -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
+    _finc_dst="${finc}/${CONDA_TOOLCHAIN_HOST}"
+    if [[ "${_finc_src}" != "${_finc_dst}" ]]; then
+      mv "${_finc_src}" "${_finc_dst}"
+      echo "intrinsic modules: $(basename "${_finc_src}") -> ${CONDA_TOOLCHAIN_HOST}"
+    fi
+    if [[ -n "${_rt_triple:-}" && ! -e "${finc}/${_rt_triple}" ]]; then
+      ln -s "${CONDA_TOOLCHAIN_HOST}" "${finc}/${_rt_triple}"
+    fi
+    test -f "${_finc_dst}/__fortran_type_info.mod" || { echo "ERROR: __fortran_type_info.mod missing in ${_finc_dst}" >&2; exit 1; }
+  fi
+else
+  echo "WARNING: no ${finc} — pre-LLVM-23 layout? intrinsic modules would then live in flang-zig"
+fi
+
 ln -sf "${rtdir}/libflang_rt.runtime.a" "${PREFIX}/lib/libflang_rt.runtime.a"
 if [[ -f "${rtdir}/libflang_rt.runtime.so" ]]; then
   ln -sf "${rtdir}/libflang_rt.runtime.so" "${PREFIX}/lib/libflang_rt.runtime.so"

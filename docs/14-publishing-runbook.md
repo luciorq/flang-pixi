@@ -6,7 +6,28 @@ channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: SUPERSEDED for 22.1.8 (never published — decision 2026-09-17); reuse the procedure for 23.1.1
+## Status: 23.1.1 consumer set PUBLISHED to `universe` (2026-09-18), all six subdirs
+
+What is on the channel (verify with r-zig-pixi's `scripts/prefix-list-packages.sh universe <subdir>`
+or the GraphQL `packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query):
+
+```
+linux-64:      lld-zig-23.1.1-zig_3ab91ef_0  flang-zig-23.1.1-zig_2190fa2_1  flang-rt-zig-23.1.1-zig_1e79d9a_1
+linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_1
+osx-arm64:     lld-zig-23.1.1-zig_a8c41ae_0  flang-zig-23.1.1-zig_071b5f1_1  flang-rt-zig-23.1.1-zig_a618626_1
+osx-64:        lld-zig-23.1.1-zig_5732dad_0  flang-zig-23.1.1-zig_705a114_1  flang-rt-zig-23.1.1-zig_79df4ff_1
+win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_2 (+ _1, superseded)
+win-arm64:     lld-zig-23.1.1-zig_279c4b1_0  flang-zig-23.1.1-zig_52d3e10_1  flang-rt-zig-23.1.1-zig_1e4a608_2 (+ _1, BROKEN layout — delete when convenient)
+```
+
+Lessons from the first publish: `rattler-build upload prefix` prints nothing
+on success without `-v`; the channel's `repodata.json` re-indexes
+asynchronously (the win subdirs lagged ~30 min and win-arm64 was 404 until
+then) — check variants via GraphQL before assuming an upload failed;
+uploading from kappa works but is silent, uploading from gamma is
+equivalent (copy the files over first, 6.5 MB/s).
+
+### Earlier status (2026-09-17): SUPERSEDED for 22.1.8 (never published); reuse the procedure for 23.x
 
 The `pfx-…` API key is now stored on all three hosts (2026-09-17). The
 file lists below are the 22.1.8 generation and must be regenerated for

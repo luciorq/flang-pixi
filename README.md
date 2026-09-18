@@ -13,13 +13,14 @@ including an `-O1` cap on osx-arm64 to dodge a gfortran miscompile that returns
 silently wrong LAPACK results. Closing that gap is what this project is for —
 see [`docs/11-r-zig-integration.md`](docs/11-r-zig-integration.md).
 
-> **Status (2026-09-17): all six platform chains are built** (LLVM 22.1.8,
-> zig 0.16.0) in local channels; smoke-validated on linux-64, osx-arm64,
-> osx-64 and win-64; linux-aarch64 and win-arm64 are built but unvalidated.
-> r-zig-pixi's `lapack.R` passes with our flang on linux-64 only. Nothing is
-> published yet. [`docs/10-status-log.md`](docs/10-status-log.md) is the
-> authoritative record; [`docs/15`](docs/15-landscape-review-2026-09.md) is
-> the latest review of where things stand and what is still needed.
+> **Status (2026-09-18): LLVM 23.1.1 generation built on all six subdirs**
+> (zig 0.16.0); smoke-validated on linux-64, osx-arm64, osx-64 and win-64;
+> linux-64 also passes the zig-cc/flang ABI probe and r-zig-pixi's `lapack.R`
+> with LAPACK compiled by this flang. linux-aarch64 and win-arm64 are built
+> but unvalidated (GHA jobs ready). Consumer packages (`lld-zig`,
+> `flang-zig`, `flang-rt-zig`) are being published to prefix.dev `universe`.
+> [`docs/10-status-log.md`](docs/10-status-log.md) is the authoritative
+> record; [`docs/15`](docs/15-landscape-review-2026-09.md) the latest review.
 
 ## Quick start
 

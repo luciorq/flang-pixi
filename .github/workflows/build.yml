@@ -283,4 +283,29 @@ jobs:
           set -euo pipefail
           files=$(find channels -name '*.conda' | grep -E '/(lld-zig|flang-zig|flang-rt-zig)-' | sort)
           echo "$files"
-          pixi exec rattler-build upload prefix --channel universe --skip-existing $files
+          # -v: without it a successful upload prints NOTHING (docs/14).
+          pixi exec rattler-build -v upload prefix --channel universe --skip-existing $files
+          echo "$files" | xargs -n1 basename > uploaded.txt
+
+      - name: verify on the server (repodata re-indexes asynchronously — ask the API instead)
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
+        shell: python
+        run: |
+          import json, os, sys, urllib.request
+          want = set(open("uploaded.txt").read().split())
+          have = set()
+          for name in ("lld-zig", "flang-zig", "flang-rt-zig"):
+              q = {"query": '{ channel(name:"universe") { packages(filters:{name:{eq:"%s"}}, limit:1) { page { variants(includeHidden:true, limit:100) { page { filename hidden activeQuarantines { reason } } } } } } }' % name}
+              req = urllib.request.Request("https://prefix.dev/api/graphql", data=json.dumps(q).encode(),
+                                           headers={"Authorization": "Bearer " + os.environ["PREFIX_API_KEY"], "Content-Type": "application/json"})
+              d = json.load(urllib.request.urlopen(req))
+              for pk in d["data"]["channel"]["packages"]["page"]:
+                  for v in pk["variants"]["page"]:
+                      if v["hidden"] or v["activeQuarantines"]:
+                          print("WARNING hidden/quarantined:", v["filename"], v["activeQuarantines"])
+                      have.add(v["filename"])
+          missing = sorted(want - have)
+          print("verified on universe:", len(want - set(missing)), "of", len(want))
+          if missing:
+              print("MISSING:", *missing, sep="\n  "); sys.exit(1)

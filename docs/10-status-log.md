@@ -14,28 +14,29 @@ successes here — a recorded failure stops the next session from repeating it.
 Platforms ordered by value to [r-zig-pixi](11-r-zig-integration.md), not ease.
 linux-64 ships nothing — it is the parity harness.
 
-| stage | linux-64 *(ref → DONE)* | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
+| stage (LLVM **23.1.1**, zig 0.16.0) | linux-64 | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
 |---|---|---|---|---|---|---|
-| recipes render + resolve | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 0 · toolchain probe | ✅ | ✅ *(after Darwin rpath fix)* | n/a *(built natively under Rosetta)* | ✅ *(windows-gnu target; MSVC default unusable w/o VS)* | n/a *(cross)* | n/a |
-| 1 · llvm-zig | ✅ 3.18 GiB *(build 7, 2.17-floored)* | ✅ 2.47 GiB | ✅ *(build 7, Rosetta-native)* | ✅ | ✅ *(build 7, cross, 2.17)* | ✅ 3.70 GiB *(cross, unstripped, build 4)* |
-| 1.5 · lld-zig | ✅ 63 MiB *(slim, build 6)* | ✅ 49 MiB *(build 4)* | ✅ *(build 6)* | ✅ *(build 4)* | ✅ *(build 6, cross)* | ✅ *(cross, build 4)* |
-| 2 · flang-zig | ✅ *(build 5)* | ✅ | ✅ *(build 5)* | ✅ 1.43 GiB *(MinGW ABI!)* | ✅ *(build 5, cross)* | ✅ 1.26 GiB *(cross, build 3)* |
-| 3 · flang-rt-zig | ✅ *(build 5)* | ✅ | ✅ *(build 5)* | ✅ *(+ extracted zig MinGW CRT)* | ✅ *(build 5, cross, resource-dir fix)* | ✅ 97.6 MiB *(+ aarch64 CRT + wcstold shim, build 3)* |
-| Q5 (libc++ leak) | ✅ resolved, no leak | n/a *(same libcxx as all of conda-forge osx)* | ⬜ | ⬜ | ⬜ | ⬜ |
-| smoke | ✅ **PASS** *(closure 1.3 GiB)* | ✅ **PASS** *(783 MB)* | ✅ **PASS** *(under Rosetta; x86_64 Mach-O runs)* | ✅ **PASS, self-contained** | ⚠ **built, UNVALIDATED** *(no aarch64 hardware/qemu)* | ⚠ **built, UNVALIDATED** *(no arm64 hardware)* |
-| ABI probe (zig cc ↔ flang) | ✅ **PASS, our own flang** | ✅ **PASS** | ⬜ | ⬜ next | ⬜ | ⬜ |
-| r-zig `make check` lapack.R | ✅ **PASS** *(2.17 gen; R binaries measure ≤ 2.17)* | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| build host / mode | gamma, native | omicron, native | omicron, Rosetta | kappa, native | gamma, cross | kappa, cross |
+| 1 · llvm-zig `_0` | ✅ 36 min | ✅ ~70 min | ✅ | ✅ ~2 h | ✅ | ✅ |
+| 1.5 · lld-zig `_0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 3 · flang-rt-zig | ✅ `_1` | ✅ `_1` | ✅ `_1` | ✅ `_2` | ✅ `_1` | ✅ `_2` (build 1 had build-host-named dirs) |
+| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta) | ✅ **PASS** | ⬜ no hardware (GHA job ready) | ⬜ no hardware (GHA job ready) |
+| ABI probe (zig cc ↔ flang) | ✅ **PASS** | ⬜ (22 passed) | ⬜ | ⬜ | ⬜ | ⬜ |
+| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
+| published to prefix.dev `universe` (lld/flang/flang-rt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ✅ pass · ❌ fail · ⬜ not attempted
 
-**linux-64 is DONE.** All three stages build, publish, install cleanly via
-the solver alone, compile+link+run real Fortran programs, and the zig-cc↔flang
-ABI probe passes. Seven bugs found and fixed along the way — table and full
-narrative in the entries below. Nothing is scope-incomplete on linux-64;
-remaining work is other platforms and, eventually, wiring this into
-r-zig-pixi for real (`make check`'s `lapack.R` is the actual bar there, not
-yet run since it lives in a different repository).
+**Where things stand (2026-09-18 02:15 EDT).** The 23.1.1 generation is
+built on all six subdirs and smoke-passes on the four platforms we can run;
+linux-64 additionally passes the ABI probe and r-zig-pixi's `lapack.R` with
+R's LAPACK compiled by this flang. The 22.1.8 generation was never
+published and has been deleted everywhere. Remaining: hardware validation of
+linux-aarch64 / win-arm64 via GHA (workflow written, not yet pushed), the
+r-zig-pixi consumer wiring for the non-linux platforms, and the osx-arm64
+ABI probe / CRAN-flang parity checks.
 
 ## Next actions, in order
 
@@ -94,6 +95,139 @@ yet run since it lives in a different repository).
   (3 cores, 7 GB) are a poor fit for the highest-value target.
 
 **Done later the same day:**
+- **First 23.1.1 regression found and fixed: intrinsic `.mod` files moved.**
+  osx-arm64 smoke at 23.1.1 build 0: `hello.f90` PASS, `modules.f90` (derived
+  types) FAIL — `error: runtime derived type info descriptor was not
+  generated and skipExternalRttiDefinition and ignoreMissingTypeDescriptors
+  options are not set`, then `Abort trap: 6`. Cause: in LLVM 23 the
+  intrinsic modules (`__fortran_type_info.mod` & co) are no longer
+  installed by flang into `include/flang/` (22.1.8 flang-zig: 15 .mod
+  files; 23.1.1: 0) but by **flang-rt** into
+  `lib/clang/23/finclude/flang/<LLVM_DEFAULT_TARGET_TRIPLE>/`, where the
+  runtimes CMake picks the *build host* triple (`arm-apple-darwin25.4.0`
+  on omicron). The driver's default lookup (`ToolChain::
+  getDefaultIntrinsicModuleDir` → `getTargetSubDirPath`, clang 23) accepts
+  only a directory named exactly after its own triple
+  (`arm64-apple-macosx26.0.0` on macOS — includes the OS version, so no
+  fixed name can match; Linux native happens to match
+  `x86_64-unknown-linux-gnu`). Verified on omicron: passing
+  `-fintrinsic-modules-path <that dir>` makes `modules.f90` compile.
+  Fix (flang-zig + flang-rt-zig → build 1): flang-rt-zig renames the
+  finclude dir to `${CONDA_TOOLCHAIN_HOST}` (+ a link under the exact
+  Linux driver triple), flang.cfg gains
+  `-fintrinsic-modules-path <CFGDIR>/../lib/clang/23/finclude/flang/<conda triple>`
+  on all platforms, and flang-rt-zig's recipe test now compiles+runs
+  `modules.f90` (derived types) so this class can't ship again.
+  linux-64 build 0 smoke **also failed** the same way even though flang-rt
+  had installed `finclude/flang/x86_64-unknown-linux-gnu/`: our driver's
+  own triple is `x86_64-conda-linux-gnu` (`flang -v` → `-triple
+  x86_64-conda-linux-gnu`), so the exact-match lookup misses there too.
+  With the rename to the conda triple the default lookup now matches on
+  Linux as well; the cfg line is the belt over those braces. Rebuilds at
+  build 1 queued behind the running chains on gamma (`chain-linux-64-fix.sh`)
+  and omicron (`chain-osx-fix.sh`); the aarch64 cross chain, the osx-64
+  chain and kappa's win-64 chain pick the fixed scripts up at their flang
+  stage automatically.
+- **osx-arm64 23.1.1 build 1: smoke PASS** (hello + modules, 18:10 EDT) —
+  the intrinsic-module fix verified on the platform that found the bug.
+- kappa win-64 flang 23.1.1 attempt 1: compiled fine (87 min) but died at
+  the last line — the new `-fintrinsic-modules-path <CFGDIR>/...` in
+  build.bat's powershell one-liner was parsed by cmd as an I/O redirection
+  (`0<CFGDIR 1>/../lib/clang`): cmd toggles quote state on every `"`,
+  escaped or not, so the inner `\"` put `<CFGDIR>` outside quotes.
+  Rewritten with PowerShell single-quoted strings + `[char]10` (no inner
+  double quotes). Relaunched 20:49 EDT.
+- **win-64 23.1.1 complete: smoke PASS** (hello + modules via a throwaway
+  pixi env on kappa, 22:30 EDT; flang-zig build 1 with the fixed cfg,
+  flang-rt-zig build 1 whose recipe test also ran modules.f90). The
+  win-arm64 cross chain (rb-arm.bat via per-package SYSTEM tasks
+  `rbarm-<pkg>`, driven from gamma by `kappa-arm-driver.sh`) started right
+  after.
+- **Local channels pruned** (new `scripts/prune-channel.py`: keep the newest
+  build per package, re-index via publish-crossbuilt.py): every 22.1.8
+  package and the 23.1.1 build-0 flang/flang-rt deleted on gamma
+  (linux-64, linux-aarch64), omicron (osx-arm64, osx-64) and kappa
+  (win-64); win-arm64 waits for its 23 chain. gamma's `aarch64out` and
+  omicron's `flang-pixi-osx64out` removed. Channel sizes now ~0.7–0.95 GB
+  per subdir. The 22.1.8 generation no longer exists anywhere.
+- **win-arm64 23.1.1 cross chain complete on kappa** (2026-09-18 01:57 EDT;
+  llvm 89 min, lld 12, flang 89, flang-rt 14; packages in
+  `channel/win-arm64`, 22.x pruned). Inspection of the packages then showed
+  the Windows-side finclude rename had **never run**: cmd's `for /d` only
+  accepts a wildcard in the last path component, so
+  `"…\clang\*\finclude\flang\*"` matched nothing (and the follow-up
+  existence check matched nothing either, so nothing failed). win-64 works
+  anyway because its dir is named `x86_64-w64-windows-gnu` == the driver's
+  own triple (default lookup). win-arm64 is broken twice over: both
+  `lib\x86_64-w64-windows-gnu\libflang_rt.runtime.a` and the finclude dir
+  carry the BUILD host's triple (the same class as the linux-aarch64 rename
+  in build.sh — never ported to build.bat, and never caught because
+  win-arm64 has never been executed). build.bat now uses nested loops,
+  renames both to `<arch>-w64-windows-gnu`, copies the modules to the
+  `<arch>-w64-mingw32` name flang.cfg references, and fails loudly if either
+  is missing. flang-rt-zig → **build 2** (Windows-only change; unix build 1
+  stays correct). Rebuild driver: `kappa-rt-driver.sh`
+  (`chain-winrt2.status`).
+- **Published to prefix.dev `universe`** (consumer set only): linux-64,
+  linux-aarch64 (gamma), osx-arm64, osx-64 (omicron) — all three packages
+  each, verified in the channel repodata. kappa's own upload silently sent
+  only win-64 flang-rt (two runs, rc 0, empty log — unexplained); the
+  Windows lld/flang packages were re-uploaded from gamma — which also
+  printed nothing. Resolution via the prefix.dev GraphQL API
+  (`packages(filters:{name:{eq:…}}){variants(includeHidden:true)}`): **all
+  18 variants exist on the server** (6 subdirs × lld/flang/flang-rt, none
+  hidden, yanked or quarantined; the win ones from kappa's *first* upload
+  at 06:05–06:07 UTC). Only the win-64/win-arm64 `repodata.json` lags
+  behind (async re-index; win-arm64 still 404 as a subdir). Nothing to fix;
+  re-check later. **02:40 EDT: win-64 and win-arm64 repodata now serve all
+  three packages** — universe carries the full 23.1.1 consumer set on all
+  six subdirs. The flang-rt build-2 Windows packages are still to come.
+- **Windows flang-rt build 2 done and verified** (2026-09-18 02:46 EDT):
+  win-64 `zig_03d85fb_2` (recipe test hello+modules PASS) and win-arm64
+  `zig_1e4a608_2` (cross). Package inspection: modules under both
+  `finclude/flang/<arch>-w64-windows-gnu` and `<arch>-w64-mingw32`, runtime
+  under `lib/<arch>-w64-windows-gnu` — for aarch64 too, which the build-1
+  package got wrong. win-64 smoke re-run: PASS. Both uploaded to universe
+  from gamma; local win channels pruned to build 2. **The 23.1.1 consumer
+  set on prefix.dev `universe` is now final for all six subdirs**
+  (linux/osx flang-rt at build 1, Windows at build 2, flang build 1, lld
+  build 0 everywhere).
+- linux-aarch64 23.1.1 cross chain complete on gamma (llvm 34 min, lld,
+  flang build 1, flang-rt build 1 in `channel/linux-aarch64`; unvalidated).
+- osx-64 flang-rt (Rosetta, standalone rattler-build) failed only in the
+  **package test**: `ld: library 'System' not found` — no SDKROOT in the
+  test env. The recipe test now resolves SDKROOT via `xcrun` on Darwin
+  (same as scripts/smoke-test.sh); rebuilt (`zig_79df4ff_1`) and
+  **osx-64 smoke PASS under Rosetta** (hello + modules, genuine x86_64
+  Mach-O, 19:05 EDT). osx-arm64 and osx-64 23.1.1 are both complete.
+- kappa: a PowerShell chain died on pixi's stderr (NativeCommandError under
+  `2>&1`) and a `.bat` sent with LF endings mis-parsed; the working driver
+  is `C:\Users\admin\kappa-chain.bat` (CRLF) which fires the SYSTEM tasks
+  flanglld/flangflang/flangrt and polls their logs, then smokes hello +
+  modules into `smoke-win.log`; status in `chain-win64.status`.
+- **linux-64 23.1.1 build 1: smoke PASS** (hello + modules, 19:54 EDT);
+  tripwire `glibc ceiling OK ... (2.17 <= floor 2.17)` on flang-new and
+  libflang_rt.runtime.so; finclude renamed `x86_64-unknown-linux-gnu ->
+  x86_64-conda-linux-gnu` as designed. Packages: flang-zig `zig_2190fa2_1`,
+  flang-rt-zig `zig_1e79d9a_1`, lld-zig `zig_3ab91ef_0`, llvm-zig
+  `zig_f1366af_0`.
+  ABI probe (zig cc ↔ flang 23.1.1, linux-64): rc 0 — see
+  `abi-probe-23.1.1-linux-64.log` in the gamma logs dir.
+- **r-zig-pixi validation against 23.1.1 (linux-64): `pixi run build` OK,
+  `pixi run check` PASS incl. `lapack.R` ("running code ... OK, comparing
+  'lapack.Rout' ... OK", 20:03 EDT)** — the validation worktree's lock moved
+  flang-zig/flang-rt-zig/lld-zig 22.1.8 → 23.1.1 (`zig_2190fa2_1` /
+  `zig_1e79d9a_1` / `zig_3ab91ef_0`). **But that run was not a valid
+  proof**: `strings libRlapack.so` still showed only `flang version
+  22.1.8` — zig's build cache reused the old Fortran objects because
+  `flang` is invoked as an untracked system command (r-zig-pixi
+  improvement: fold the compiler's version/path into the Run-step cache
+  key). Re-run with `build/zig-cache` removed (`rzig-validate-23-full.sh`,
+  logs `rzig-23-{build,check}-full.log`); result below.
+  **Full rebuild result: build OK, `check` PASS incl. `lapack.R`
+  (20:2x EDT), libRlapack.so now embeds only `flang version 23.1.1`.**
+  The definition-of-done bar (docs/01) holds on linux-64 for the 23.1.1
+  generation.
 - Recipes: cross conditionals switched to `build_platform != target_platform`
   (native tblgen dep) and `... and build_platform == "linux-64"` (zig_linux-64),
   so a *native* linux-aarch64 build renders `zig_linux-aarch64` and no

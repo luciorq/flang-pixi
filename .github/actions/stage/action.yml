@@ -24,6 +24,17 @@ runs:
         sudo docker image prune -af >/dev/null 2>&1 || true
         df -h .
 
+    - name: defender exclusions (windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      continue-on-error: true
+      # Real-time scanning of every object file roughly halved kappa's build
+      # and delete throughput until the same exclusions were added there
+      # (docs/10 2026-09-17). Runners are admin; harmless if it fails.
+      run: |
+        Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE\.pixi","$env:USERPROFILE\.cache"
+        Add-MpPreference -ExclusionProcess "zig.exe","clang.exe","ninja.exe","cmake.exe","rattler-build.exe","pixi.exe","pixi-build-rattler-build.exe","lld-link.exe","ld.lld.exe","llvm-ar.exe"
+
     - uses: prefix-dev/setup-pixi@v0.10.2
       with:
         cache: true          # the workspace env: rattler-build + python

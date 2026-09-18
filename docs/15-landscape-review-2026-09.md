@@ -8,19 +8,22 @@ external rows before acting on them if more than a few weeks have passed.
 
 ## 1. What this project has actually delivered
 
+*(table rewritten 2026-09-18; the original 22.1.8 assessment is in git history)*
+
 | deliverable | state |
 |---|---|
-| zig-built llvm-zig / lld-zig / flang-zig / flang-rt-zig, LLVM **22.1.8**, zig **0.16.0** | built for all six subdirs, in file:// channels on gamma (linux-64, linux-aarch64), omicron (osx-arm64, osx-64), kappa (win-64, win-arm64) |
-| smoke (compile+link+run `tests/*.f90`) | PASS linux-64, osx-arm64, osx-64 (Rosetta), win-64; **never run** on linux-aarch64, win-arm64 (no hardware) |
-| zig-cc ↔ flang ABI probe | PASS linux-64, osx-arm64 only |
-| r-zig-pixi `lapack.R` at -O2 with our flang | PASS **linux-64 only** |
-| glibc ≤ 2.17 floor, build-time tripwire | enforced on both linux subdirs (docs/13) |
-| MinGW-ABI flang for win-64 / win-arm64 | exists; to our knowledge the only conda-packaged one |
-| published to prefix.dev `universe` | **nothing yet** — universe holds only `r-zig-slim` (linux-64, osx-arm64, win-64) |
+| zig-built llvm-zig / lld-zig / flang-zig / flang-rt-zig, LLVM **23.1.1**, zig **0.16.0** | built for all six subdirs (gamma: linux-64 native + linux-aarch64 cross; omicron: osx-arm64 native + osx-64 Rosetta; kappa: win-64 native + win-arm64 cross) |
+| smoke (compile+link+run `tests/*.f90`, incl. derived types) | PASS linux-64, osx-arm64, osx-64, win-64; linux-aarch64 / win-arm64 unrun (no hardware; GHA jobs written) |
+| zig-cc ↔ flang ABI probe | PASS linux-64 (23.1.1); osx-arm64 passed at 22.1.8, not yet re-run |
+| r-zig-pixi `lapack.R` at -O2 with LAPACK compiled by this flang | PASS **linux-64** (clean rebuild, `flang version 23.1.1` in libRlapack.so) |
+| glibc ≤ 2.17 floor, build-time tripwire | enforced on both linux subdirs |
+| MinGW-ABI flang for win-64 / win-arm64 | exists; win-arm64 flang-rt is being rebuilt (build 2) for a per-target directory-name bug |
+| published to prefix.dev `universe` | consumer set (lld/flang/flang-rt) for all six subdirs uploaded 2026-09-18; win-64/win-arm64 repodata still re-indexing; Windows flang-rt build 2 to follow |
+| 22.1.8 generation | never published; deleted from every local channel |
 
-So the toolchain is *built*, but the project's own definition of done
-(docs/01: `lapack.R` at -O2 through r-zig-pixi, on the platforms that
-matter) has been met only on the one platform that ships nothing.
+The definition of done (docs/01) now holds on linux-64 for the 23.1.1
+generation. The other platforms have a smoke-level proof; the r-zig-pixi
+consumer wiring (§2.8) is what turns them into real proofs.
 
 ## 2. What changed outside the project since the design was written
 

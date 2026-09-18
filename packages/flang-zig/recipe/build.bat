@@ -141,7 +141,16 @@ REM Driver config: route linking through our ld.lld (lld-zig run dep) --
 REM without this the MinGW driver invokes bare `ld`, which does not exist
 REM in the env. The Windows analog of the unix flang.cfg block. The CRT
 REM the driver then finds is extracted by flang-rt-zig (stage 3).
-powershell -Command "[IO.File]::WriteAllText('%LIBRARY_BIN%\flang.cfg', \"-fuse-ld=lld`n\")"
+REM LLVM >= 23: intrinsic .mod files live in flang-rt's resource dir under a
+REM triple-named directory the driver only finds by exact-name match; point
+REM it there explicitly (flang-rt-zig renames the dir to this conda triple).
+REM See the unix build.sh and docs/10 2026-09-17.
+set "FINC_TRIPLE=x86_64-w64-mingw32"
+if "%target_platform%"=="win-arm64" set "FINC_TRIPLE=aarch64-w64-mingw32"
+REM NOTE: no inner double quotes here -- cmd toggles its quote state on every
+REM `"` (backslash-escaped or not), which put <CFGDIR> outside quotes and
+REM turned it into an I/O redirection (first win-64 23.1.1 build).
+powershell -Command "[IO.File]::WriteAllText('%LIBRARY_BIN%\flang.cfg', '-fuse-ld=lld' + [char]10 + '-fintrinsic-modules-path <CFGDIR>/../lib/clang/%MAJOR_VER%/finclude/flang/%FINC_TRIPLE%' + [char]10)"
 if not exist "%LIBRARY_BIN%\flang.cfg" ( echo ERROR: flang.cfg not written & exit /b 1 )
 
 REM Strip installed executables -- mirrors the unix build.sh strip pass.

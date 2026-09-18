@@ -148,6 +148,35 @@ for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
   )
 )
 
+REM Per-target directories: on cross builds (win-64 -> win-arm64) the runtimes
+REM CMake names lib\<triple> and (LLVM >= 23) finclude\flang\<triple> after
+REM the BUILD host (x86_64-w64-windows-gnu); the driver resolves both by its
+REM own TARGET triple. Normalise both to the target's windows-gnu triple
+REM (matches the driver's default lookup), and expose the intrinsic modules
+REM a second time under the conda triple that flang-zig's flang.cfg names in
+REM -fintrinsic-modules-path. NOTE: cmd's `for /d` only accepts a wildcard in
+REM the LAST path component, hence the nested loops (a single
+REM "clang\*\finclude\flang\*" glob silently matches nothing -- that is how
+REM the first 23.1.1 Windows builds shipped without this rename).
+REM See the unix build.sh and docs/10 2026-09-17/18.
+set "RT_TRIPLE=x86_64-w64-windows-gnu"
+if "%target_platform%"=="win-arm64" set "RT_TRIPLE=aarch64-w64-windows-gnu"
+set "FINC_TRIPLE=x86_64-w64-mingw32"
+if "%target_platform%"=="win-arm64" set "FINC_TRIPLE=aarch64-w64-mingw32"
+for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
+  for /d %%T in ("%%D\lib\*windows-gnu") do if /i not "%%~nxT"=="%RT_TRIPLE%" (
+    if not exist "%%D\lib\%RT_TRIPLE%" ( move "%%T" "%%D\lib\%RT_TRIPLE%" >nul && echo runtime dir: %%~nxT -^> %RT_TRIPLE% )
+  )
+  for /d %%F in ("%%D\finclude\flang\*") do if /i not "%%~nxF"=="%RT_TRIPLE%" if /i not "%%~nxF"=="%FINC_TRIPLE%" (
+    if not exist "%%D\finclude\flang\%RT_TRIPLE%" ( move "%%F" "%%D\finclude\flang\%RT_TRIPLE%" >nul && echo intrinsic modules: %%~nxF -^> %RT_TRIPLE% )
+  )
+  if exist "%%D\finclude\flang\%RT_TRIPLE%" if not exist "%%D\finclude\flang\%FINC_TRIPLE%" (
+    xcopy /e /i /q "%%D\finclude\flang\%RT_TRIPLE%" "%%D\finclude\flang\%FINC_TRIPLE%" >nul && echo intrinsic modules also under %FINC_TRIPLE%
+  )
+  if not exist "%%D\finclude\flang\%FINC_TRIPLE%\__fortran_type_info.mod" ( echo ERROR: __fortran_type_info.mod missing under %%D\finclude\flang & exit /b 1 )
+  if not exist "%%D\lib\%RT_TRIPLE%\libflang_rt.runtime.a" ( echo ERROR: libflang_rt.runtime.a missing under %%D\lib\%RT_TRIPLE% & exit /b 1 )
+)
+
 REM Strip shared libraries -- mirrors the unix build.sh strip pass. Windows
 REM flang-rt is static-only for now (FLANG_RT_ENABLE_SHARED=OFF, see the
 REM header comment above), so this is a no-op until that changes; static

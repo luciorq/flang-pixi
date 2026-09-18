@@ -45,7 +45,10 @@ build:
   # 0: LLVM 23.1.1 generation (2026-09-17). Decision: the 22.1.8 chain is
   # never published (prefix.dev storage); 23.x is the first published
   # generation. Build numbers restart at 0 with the new version.
-  number: 0
+  # 1: LLVM 23 moved the intrinsic .mod files into flang-rt's resource dir
+  #    under a driver-triple-named directory; flang.cfg now passes
+  #    -fintrinsic-modules-path and flang-rt-zig normalises the dir name.
+  number: 1
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:

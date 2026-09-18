@@ -266,6 +266,18 @@ if [[ -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
   {
     echo '$-Wl,-L,<CFGDIR>/../lib'
     echo '$-Wl,-rpath,<CFGDIR>/../lib'
+    # LLVM >= 23: the intrinsic .mod files (__fortran_type_info & co) are
+    # installed by flang-rt under lib/clang/<major>/finclude/flang/<triple>/,
+    # and the driver's default lookup (clang's getTargetSubDirPath) only
+    # accepts a directory named EXACTLY after its own target triple — on
+    # macOS that string carries the OS version (arm64-apple-macosx26.0.0),
+    # so no fixed directory name can ever match. flang-rt-zig therefore
+    # installs the modules under the conda triple and we point the driver at
+    # that directory explicitly (user paths take precedence over the
+    # default). Without this, any program using derived types dies with
+    # "runtime derived type info descriptor was not generated" (first seen
+    # on osx-arm64 with 23.1.1; see docs/10 2026-09-17).
+    echo "-fintrinsic-modules-path <CFGDIR>/../lib/clang/${PKG_VERSION%%.*}/finclude/flang/${CONDA_TOOLCHAIN_HOST}"
     if [[ "${target_platform}" == linux-* ]]; then
       echo '$-Wl,-rpath-link,<CFGDIR>/../lib'
       echo "--sysroot=<CFGDIR>/../${CONDA_TOOLCHAIN_HOST}/sysroot"

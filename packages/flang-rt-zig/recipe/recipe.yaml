@@ -43,7 +43,13 @@ build:
   # 0: LLVM 23.1.1 generation (2026-09-17). Decision: the 22.1.8 chain is
   # never published (prefix.dev storage); 23.x is the first published
   # generation. Build numbers restart at 0 with the new version.
-  number: 0
+  # 1: LLVM 23 moved the intrinsic .mod files into flang-rt's resource dir
+  #    under a driver-triple-named directory; flang.cfg now passes
+  #    -fintrinsic-modules-path and flang-rt-zig normalises the dir name.
+  # 2: Windows only in practice — build.bat's finclude rename never ran (cmd
+  #    for /d + mid-path wildcard) and cross builds left lib\<build-host
+  #    triple>; both normalised now. Unix packages at build 1 are correct.
+  number: 2
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -134,18 +140,31 @@ tests:
   - script:
       - if: unix
         then:
+          # macOS: flang's Darwin driver needs the SDK to find libSystem at
+          # link time and honours SDKROOT like clang; the test env does not
+          # always carry one (seen on the osx-64 Rosetta build: "ld: library
+          # 'System' not found"). Same resolution as scripts/smoke-test.sh.
+          - if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then export SDKROOT="$(xcrun --show-sdk-path)"; fi
           - flang hello.f90 -o hello
           - ./hello
+          # Derived types need the intrinsic __fortran_type_info module,
+          # which LLVM >= 23 ships in this package's finclude dir — this is
+          # the test that caught the osx-arm64 23.1.1 breakage (docs/10).
+          - flang modules.f90 -o modules
+          - ./modules
       - if: win
         then:
           - flang.exe hello.f90 -o hello.exe
           - hello.exe
+          - flang.exe modules.f90 -o modules.exe
+          - modules.exe
     requirements:
       run:
         - flang-zig ==${{ version }}
     files:
       recipe:
         - hello.f90
+        - modules.f90
 
 about:
   homepage: https://flang.llvm.org

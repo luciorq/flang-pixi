@@ -1,0 +1,175 @@
+name: test
+
+# Test packages that were BUILT ELSEWHERE (gamma / omicron / kappa) on
+# GitHub's native runners — including linux-aarch64 and win-arm64, which no
+# build host can execute. docs/08-ci.md "Testing built packages".
+#
+#   source = https://prefix.dev/universe      → test what is published
+#   source = release:<tag>                     → test a GitHub pre-release
+#            holding <subdir>--<file>.conda assets (scripts/stage-release.sh
+#            creates it from the build hosts), then optionally PROMOTE the
+#            consumer set to universe once every platform is green.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Channel URL, or release:<tag> of a staging pre-release"
+        default: "https://prefix.dev/universe"
+        type: string
+      version:
+        description: "Version pin for flang-zig / flang-rt-zig (empty = latest)"
+        default: "23.1.1"
+        type: string
+      targets:
+        description: "Comma-separated subdirs to test"
+        default: "linux-64,linux-aarch64,osx-64,osx-arm64,win-64,win-arm64"
+        type: string
+      promote:
+        description: "If source is a release and all tests pass: upload lld/flang/flang-rt to prefix.dev universe"
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 6 * * 1"   # weekly, against universe with the defaults
+
+env:
+  SOURCE: ${{ inputs.source || 'https://prefix.dev/universe' }}
+  VERSION: ${{ inputs.version || '23.1.1' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        shell: python
+        run: |
+          import json, os
+          runners = {
+            "linux-64":      "ubuntu-24.04",
+            "linux-aarch64": "ubuntu-24.04-arm",
+            "osx-64":        "macos-15-intel",
+            "osx-arm64":     "macos-15",
+            "win-64":        "windows-2025",
+            "win-arm64":     "windows-11-arm",
+          }
+          raw = "${{ inputs.targets }}" or ",".join(runners)
+          wanted = [t.strip() for t in raw.split(",") if t.strip()]
+          bad = [t for t in wanted if t not in runners]
+          assert not bad, f"unknown targets {bad}"
+          m = {"include": [{"target": t, "runner": runners[t]} for t in wanted]}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(m)}\n")
+
+  test:
+    name: test (${{ matrix.target }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: defender exclusions (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE\.pixi","$env:USERPROFILE\.cache"
+          Add-MpPreference -ExclusionProcess "zig.exe","clang.exe","flang.exe","flang-23.exe","lld-link.exe","ld.lld.exe","pixi.exe"
+
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          run-install: false
+
+      # release:<tag> → download this subdir's assets, index a local channel
+      - name: fetch staging release assets
+        if: startsWith(env.SOURCE, 'release:')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${SOURCE#release:}"; sd="${{ matrix.target }}"
+          mkdir -p chan/"$sd" chan/noarch dl
+          gh release download "$tag" --pattern "${sd}--*" --dir dl
+          for f in dl/"${sd}--"*; do mv "$f" "chan/$sd/${f##*/${sd}--}"; done
+          ls -la chan/"$sd"
+          pixi exec rattler-index fs chan
+          echo "CHANNEL=$PWD/chan" >> "$GITHUB_ENV"
+
+      - name: channel = URL
+        if: ${{ !startsWith(env.SOURCE, 'release:') }}
+        shell: bash
+        run: echo "CHANNEL=$SOURCE" >> "$GITHUB_ENV"
+
+      - name: smoke (hello + derived types)
+        shell: bash
+        run: bash scripts/ci-smoke.sh "$CHANNEL" "$VERSION" 2>&1 | tee smoke.log
+
+      - name: ABI probe (zig cc ↔ flang)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/ci-abi.sh "$CHANNEL" "${{ matrix.target }}" "$VERSION" 2>&1 | tee abi.log
+
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          { echo "### ${{ matrix.target }} (${{ matrix.runner }}) — source \`$SOURCE\`, version \`$VERSION\`"
+            echo '```'; grep -E "^(SMOKE|ABI probe|  [a-z].* ok$|.*FAILED)" smoke.log abi.log 2>/dev/null || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    name: promote release to universe
+    needs: test
+    if: ${{ inputs.promote && startsWith(inputs.source, 'release:') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          run-install: false
+      - name: download all assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${SOURCE#release:}"
+          mkdir dl && gh release download "$tag" --dir dl
+          ls dl
+      - name: upload consumer set (never llvm-zig)
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
+        run: |
+          set -euo pipefail
+          files=$(ls dl/*.conda | grep -E -- '--(lld-zig|flang-zig|flang-rt-zig)-' | sort)
+          # assets are named <subdir>--<file>; rattler-build needs the real filename
+          mkdir up; for f in $files; do b="${f##*/}"; cp "$f" "up/${b#*--}"; done
+          ls up
+          # -v: without it a successful upload prints NOTHING (docs/14).
+          pixi exec rattler-build -v upload prefix --channel universe --skip-existing up/*.conda
+          ls up > uploaded.txt
+      - name: verify on the server (repodata re-indexes asynchronously)
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
+        shell: python
+        run: |
+          import json, os, sys, urllib.request
+          want = set(open("uploaded.txt").read().split())
+          have = set()
+          for name in ("lld-zig", "flang-zig", "flang-rt-zig"):
+              q = {"query": '{ channel(name:"universe") { packages(filters:{name:{eq:"%s"}}, limit:1) { page { variants(includeHidden:true, limit:100) { page { filename hidden activeQuarantines { reason } } } } } } }' % name}
+              req = urllib.request.Request("https://prefix.dev/api/graphql", data=json.dumps(q).encode(),
+                                           headers={"Authorization": "Bearer " + os.environ["PREFIX_API_KEY"], "Content-Type": "application/json"})
+              d = json.load(urllib.request.urlopen(req))
+              for pk in d["data"]["channel"]["packages"]["page"]:
+                  for v in pk["variants"]["page"]:
+                      if v["hidden"] or v["activeQuarantines"]:
+                          print("WARNING hidden/quarantined:", v["filename"], v["activeQuarantines"])
+                      have.add(v["filename"])
+          missing = sorted(want - have)
+          print("verified on universe:", len(want - set(missing)), "of", len(want))
+          if missing:
+              print("MISSING:", *missing, sep="\n  "); sys.exit(1)

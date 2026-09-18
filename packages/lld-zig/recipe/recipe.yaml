@@ -50,7 +50,11 @@ build:
   # 0: LLVM 23.1.1 generation (2026-09-17). Decision: the 22.1.8 chain is
   # never published (prefix.dev storage); 23.x is the first published
   # generation. Build numbers restart at 0 with the new version.
-  number: 0
+  # 1: rebuilt with standalone rattler-build so variants.yaml is honoured —
+  #    the pixi-built linux-64/osx-arm64 packages carried the backend's
+  #    default run exports (__glibc >=2.28 / __osx >=13.0); see docs/10
+  #    2026-09-18. Higher number = solvers prefer the corrected files.
+  number: 1
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build

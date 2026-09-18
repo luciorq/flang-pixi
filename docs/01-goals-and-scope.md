@@ -17,6 +17,17 @@ Closing that gap is the point of this project. See
 [11 — r-zig-pixi integration](11-r-zig-integration.md) for the full picture;
 it is the document that should drive prioritisation.
 
+## Where this is heading (stated 2026-09-18)
+
+r-zig-pixi is to move to **100 % zig cc / zig c++ / flang on every
+platform**, with **Windows arm64 support soon**. For this project that means:
+the consumer set (lld-zig, flang-zig, flang-rt-zig) must be installable and
+correct on all six subdirs, Fortran **OpenMP must work everywhere** through
+conda-forge's `llvm-openmp` (the one runtime zig cc code already links; we
+ship only the `omp_lib` module and the Windows link shims), and the
+unvalidated platforms (linux-aarch64, win-arm64) get their execution proof
+from the GHA `test.yml` matrix rather than from hardware we own.
+
 ## Priority order
 
 Driven by where r-zig-pixi actually hurts, not by what is easiest:

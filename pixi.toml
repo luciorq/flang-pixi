@@ -86,30 +86,36 @@ zig-probe = ["zig-probe"]
 
 # --- stages 1-3: package builds -----------------------------------------------
 #
-# `pixi publish --to ./channel` (NOT `pixi build`) is what we want here: it
-# builds AND writes a properly indexed local conda channel at ./channel/<subdir>/
-# with repodata.json. `pixi build -o DIR` only drops a bare .conda file, which
-# the next stage cannot resolve against. Stages 2 and 3 declare `../../channel`
-# as their first channel, so each stage sees the previous stage's output.
-build-llvm = { cmd = "pixi publish --path packages/llvm-zig --to ./channel", description = "Stage 1: build llvm-zig (llvm + mlir + clang + lld) with zig" }
-build-lld = { cmd = "pixi publish --path packages/lld-zig --to ./channel", description = "Stage 1.5: build standalone lld-zig against llvm-zig (flang's runtime linker)" }
-build-flang = { cmd = "pixi publish --path packages/flang-zig --to ./channel", description = "Stage 2: build flang-zig against llvm-zig" }
-build-flang-rt = { cmd = "pixi publish --path packages/flang-rt-zig --to ./channel", description = "Stage 3: build flang-rt-zig with the stage-2 flang" }
+# Standalone rattler-build (scripts/rb-stage.sh / .bat), NOT `pixi publish`.
+# Decision 2026-09-18 (docs/06, docs/10): the pixi path reads variants only
+# from the manifest's [workspace.build-variants] tables (measured: those do
+# reproduce the standalone build hash exactly) — never from
+# recipe/variants.yaml, and a `--variant-config` file loses to pixi's derived
+# c_stdlib_version (= the platform's __glibc/__osx virtual package, defaults
+# 2.28 / 13.0). Rather than keep variants.yaml and TOML tables in sync, the
+# recipe's variants.yaml is the single source and every build — native,
+# cross, CI — goes through standalone rattler-build, followed by the
+# check-stdlib-floor.py tripwire. `--output-dir` gets indexed, so
+# publish-crossbuilt.py just copies the result into ./channel.
+#
+# RB_OUT: where work trees and packages land (on gamma this must be on /data).
+build-llvm = { cmd = "bash scripts/rb-stage.sh llvm-zig", description = "Stage 1: build llvm-zig (llvm + mlir + clang) with zig via standalone rattler-build" }
+build-lld = { cmd = "bash scripts/rb-stage.sh lld-zig", description = "Stage 1.5: build standalone lld-zig against llvm-zig (flang's runtime linker)" }
+build-flang = { cmd = "bash scripts/rb-stage.sh flang-zig", description = "Stage 2: build flang-zig against llvm-zig" }
+build-flang-rt = { cmd = "bash scripts/rb-stage.sh flang-rt-zig", description = "Stage 3: build flang-rt-zig with the stage-2 flang" }
 
 build-all = { depends-on = ["build-llvm", "build-lld", "build-flang", "build-flang-rt"], description = "Run stages 1-3 in order" }
 
+
 # --- win-arm64: cross only, hosted on a win-64 machine ------------------------
-#
-# conda-forge publishes zig_win-arm64 ONLY into the win-64 subdir, so win-arm64
-# has no native toolchain and MUST be cross-built from win-64. Run `build-all`
-# on the same machine first: the cross build needs the native win-64 llvm-zig
-# for tblgen, and the win-64 stage 1 must have been built with AArch64 in
-# LLVM_TARGETS_TO_BUILD (see docs/05-platform-matrix.md).
-build-llvm-winarm = { cmd = "pixi publish --path packages/llvm-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 1 for win-arm64, cross-built from win-64" }
-build-lld-winarm = { cmd = "pixi publish --path packages/lld-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 1.5 for win-arm64, cross-built from win-64 (host-dep recipe, possible since llvm-zig build 1 dropped its bundled lld)" }
-build-flang-winarm = { cmd = "pixi publish --path packages/flang-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 2 for win-arm64, cross-built from win-64" }
-build-flang-rt-winarm = { cmd = "pixi publish --path packages/flang-rt-zig --target-platform win-arm64 --build-platform win-64 --to ./channel", description = "Stage 3 for win-arm64, cross-built from win-64" }
-build-all-winarm = { depends-on = ["build-llvm-winarm", "build-lld-winarm", "build-flang-winarm", "build-flang-rt-winarm"], description = "Cross-build all three stages for win-arm64 (run on a win-64 host, after build-all)" }
+# Same script with a target: `bash scripts/rb-stage.sh llvm-zig win-arm64`
+# (kappa keeps rb-arm.bat doing the same). The win-64 chain must exist in
+# ./channel first (tblgen + the Fortran compiler for the arm64 runtime).
+build-llvm-winarm = { cmd = "bash scripts/rb-stage.sh llvm-zig win-arm64", description = "Stage 1 for win-arm64, cross-built from win-64" }
+build-lld-winarm = { cmd = "bash scripts/rb-stage.sh lld-zig win-arm64", description = "Stage 1.5 for win-arm64, cross-built from win-64" }
+build-flang-winarm = { cmd = "bash scripts/rb-stage.sh flang-zig win-arm64", description = "Stage 2 for win-arm64, cross-built from win-64" }
+build-flang-rt-winarm = { cmd = "bash scripts/rb-stage.sh flang-rt-zig win-arm64", description = "Stage 3 for win-arm64, cross-built from win-64" }
+build-all-winarm = { depends-on = ["build-llvm-winarm", "build-lld-winarm", "build-flang-winarm", "build-flang-rt-winarm"], description = "Cross-build all stages for win-arm64 (run on a win-64 host, after build-all)" }
 
 # --- end-to-end checks --------------------------------------------------------
 smoke = { cmd = "bash scripts/smoke-test.sh", description = "Install flang from ./channel and compile tests/*.f90 with it" }
@@ -121,3 +127,16 @@ abi-probe = { cmd = "bash scripts/abi-probe.sh", description = "Mixed zig-cc + f
 
 # --- housekeeping -------------------------------------------------------------
 clean = { cmd = "rm -rf channel output .pixi/bld packages/*/.pixi/bld", description = "Remove build outputs and intermediate build dirs" }
+
+# Windows: the same stages through the cmd twin of rb-stage.sh (kappa's SYSTEM
+# tasks call `pixi run build-*` from the repo dir).
+[target.win-64.tasks]
+build-llvm = { cmd = "scripts\\rb-stage.bat llvm-zig", description = "Stage 1 (win-64)" }
+build-lld = { cmd = "scripts\\rb-stage.bat lld-zig", description = "Stage 1.5 (win-64)" }
+build-flang = { cmd = "scripts\\rb-stage.bat flang-zig", description = "Stage 2 (win-64)" }
+build-flang-rt = { cmd = "scripts\\rb-stage.bat flang-rt-zig", description = "Stage 3 (win-64)" }
+build-llvm-winarm = { cmd = "scripts\\rb-stage.bat llvm-zig win-arm64", description = "Stage 1 for win-arm64, cross" }
+build-lld-winarm = { cmd = "scripts\\rb-stage.bat lld-zig win-arm64", description = "Stage 1.5 for win-arm64, cross" }
+build-flang-winarm = { cmd = "scripts\\rb-stage.bat flang-zig win-arm64", description = "Stage 2 for win-arm64, cross" }
+build-flang-rt-winarm = { cmd = "scripts\\rb-stage.bat flang-rt-zig win-arm64", description = "Stage 3 for win-arm64, cross" }
+

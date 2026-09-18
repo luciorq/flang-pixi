@@ -22,7 +22,7 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 cd "$work"
 pixi init . >/dev/null
 pixi workspace channel add "$chan_url" --prepend
-extra=""; [[ "$plat" == linux-* ]] && extra="sysroot_${plat}=2.17"
+extra=""   # sysroot is pulled in by flang-zig's own run dependency
 pixi add "flang-zig$pin" "flang-rt-zig$pin" "$zigpkg" $extra
 # abi-probe.sh expects ZIG_CC (set by the zig activation inside `pixi run`)
 # and flang on PATH.

@@ -48,7 +48,9 @@ build:
   # 1: LLVM 23 moved the intrinsic .mod files into flang-rt's resource dir
   #    under a driver-triple-named directory; flang.cfg now passes
   #    -fintrinsic-modules-path and flang-rt-zig normalises the dir name.
-  number: 1
+  # 2: rebuilt with standalone rattler-build (variants honoured — glibc 2.17
+  #    sysroot dep / __osx 11.0); see lld-zig recipe and docs/10 2026-09-18.
+  number: 2
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:

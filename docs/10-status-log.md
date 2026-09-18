@@ -192,6 +192,110 @@ ABI probe / CRAN-flang parity checks.
   set on prefix.dev `universe` is now final for all six subdirs**
   (linux/osx flang-rt at build 1, Windows at build 2, flang build 1, lld
   build 0 everywhere).
+- **2026-09-18 11:00 — the pixi build path ignored our variants (it only
+  reads manifest tables, never `recipe/variants.yaml`); build path switched
+  to standalone rattler-build; linux-64 + osx-arm64 consumer sets
+  rebuilding.** Found while wiring the GHA test workflow: installing
+  `flang-zig==23.1.1` from universe on linux-64 with `sysroot_linux-64=2.17`
+  cannot solve — the package depends on `sysroot_linux-64 >=2.28` and
+  `__glibc >=2.28,<3.0.a0`, i.e. **it would refuse to install on the
+  glibc-2.17 servers this project exists for**, although its binaries are
+  floored at 2.17 (tripwire). Every package built through `pixi publish`
+  is affected (osx-arm64: `__osx >=13.0` instead of 11.0); everything built
+  with standalone rattler-build is correct.
+  **Re-examined the same day (five measured builds of lld-zig, table in
+  docs/06):** pixi derives `c_stdlib`/`c_stdlib_version` from the
+  platform's `__glibc`/`__osx` virtual packages (pixi defaults 2.28 /
+  13.0; `pixi_core/workspace/stdlib_variants.rs`) and inserts them unless
+  the manifest's `[workspace.build-variants]` already set the key
+  (`variant_configuration.entry(key).or_insert_with`); `--variant-config`
+  files rank below that (measured: no effect on hash or metadata);
+  manifest tables — incl. per-platform `[workspace.target.linux.
+  build-variants]` — reproduce the standalone hash `zig_db819e7` and
+  `__glibc >=2.17` exactly; declaring `glibc = "2.17"` on `platforms`
+  also derives 2.17 but makes the host solve fail (the 2.17 virtual
+  platform rejects deps with higher floors, e.g. the pixi-built llvm-zig).
+  So the pixi route *could* be made correct with manifest tables, at the
+  cost of maintaining every variant twice (TOML for native pixi builds,
+  YAML for cross/CI standalone builds). **Decision (layout c):** standalone
+  rattler-build everywhere — `pixi run build-*` = `scripts/rb-stage.sh`
+  (`rb-stage.bat` on Windows), `recipe/variants.yaml` the single source,
+  per-package `pixi.toml` manifests deleted, and a new tripwire
+  `scripts/check-stdlib-floor.py` (rb-stage + the CI stage action) that
+  fails any package whose `__glibc`/`__osx`/`sysroot_*` floor exceeds the
+  recipe's `c_stdlib_version` (verified: passes the standalone lld-zig,
+  fails the pixi-built one). Build numbers bumped (lld 1, flang 2,
+  flang-rt 3) so solvers prefer the corrected files; the wrong linux-64 /
+  osx-arm64 files on universe (`lld-zig zig_3ab91ef_0`, `flang-zig
+  zig_2190fa2_1`, `flang-rt-zig zig_1e79d9a_1`; `zig_a8c41ae_0`,
+  `zig_071b5f1_1`, `zig_a618626_1`) must be deleted by the user (key lacks
+  `channel:delete-package`). Chains: `chain-linux-64-rb.sh` (gamma),
+  `chain-osx-arm64-rb.sh` (omicron). win-64 was pixi-built too but has no
+  affected run dependency (win variants carry no stdlib floor); rebuild it
+  on the next natural occasion.
+  **osx-arm64 rebuilt and published 11:38 EDT**: lld `zig_a177b76_1`,
+  flang `zig_e52f94e_2`, flang-rt `zig_eb63498_3`, all `__osx >=11.0`,
+  smoke PASS; verified on universe next to the old 13.0 files.
+  **linux-64 rebuilt and published 12:07 EDT**: lld `zig_db819e7_1`,
+  flang `zig_16e4e22_2`, flang-rt `zig_501841f_3`, all `__glibc >=2.17`
+  (flang: `sysroot_linux-64 >=2.17`), smoke PASS; verified on universe next
+  to the old 2.28 files. Universe now carries a correct 23.1.1 consumer set
+  on all six subdirs; the six superseded files remain until deleted.
+- **OpenMP assessment (2026-09-18, question from the user).** Measured with
+  our flang 23.1.1 + conda-forge `llvm-openmp` 23.1.1 (exists on all six
+  subdirs; ships `omp.h` + `libomp.{so,dylib,dll}` + `libomp.lib`, but **no
+  Fortran `omp_lib` module**): linux-64 and osx-arm64 — `flang -fopenmp`
+  with `!$omp` directives compiles, links `-lomp` and runs multi-threaded
+  against the conda-forge runtime out of the box; `use omp_lib` fails
+  (`No explicit type declared for 'omp_get_max_threads'`). win-64 — the
+  MinGW driver emits `-latomic -lomp`; neither resolves (no `libatomic`,
+  and the MSVC import lib is named `libomp.lib` while `-lomp` searches
+  `omp.lib`/`libomp.dll.a`); with an empty `libatomic.a` and an `omp.lib`
+  copy it links and runs (rc 0), importing the same `libomp.dll` zig cc's C
+  code uses. r-zig-pixi already depends on `llvm-openmp` for C/C++ and sets
+  `SHLIB_OPENMP_FFLAGS` empty on linux. LLVM 23 keeps the module source in
+  `openmp/module/omp_lib.F90.var` (bind(c) interfaces, five version
+  placeholders). Conclusion in the reply of the same time: no libomp build
+  needed; ship `omp_lib.mod` (+ Windows `libomp.dll.a` / `libatomic.a`)
+  from flang-rt-zig if Fortran OpenMP is wanted.
+- **User decision (same day): every platform must support OpenMP in flang,
+  win-arm64 included; goal restated — r-zig-pixi 100 % zig cc / zig c++ /
+  flang on all platforms, Windows arm64 support soon.** Implemented as
+  flang-rt-zig **build 4**: `omp_lib.mod` + `omp_lib_kinds.mod` + `omp_lib.h`
+  built from `openmp/module/omp_lib.F90.var` with our flang (LLVM's five
+  placeholders: 5.0 / 201611 / KMP_VERSION_BUILD from kmp_version.cpp /
+  No_Timestamp) and installed next to the intrinsic modules on all
+  platforms; on Windows additionally `libomp.dll.a` (MinGW import library
+  generated from the export table of conda-forge's `libomp.dll` — new
+  `pe-exports.py` + `zig dlltool`, arm64 machine for win-arm64) and an empty
+  `libatomic.a` in the extracted-CRT lib dir; `llvm-openmp` is now a run
+  dependency on every platform (host dep on Windows). New
+  `tests/openmp/{omp_directives,omp_lib_use}.f90`, `scripts/ci-omp.sh`, an
+  OpenMP step in `test.yml` for every target (the win-arm64 runner is where
+  arm64 OpenMP gets its first real execution), and both programs in the
+  flang-rt-zig recipe test. Rebuilding flang-rt-zig on all six subdirs.
+  First build-4 attempt failed on every host at the module compile:
+  `Cannot parse module file for module 'iso_c_binding'` — at flang-rt
+  build time the build-env flang's cfg points at $BUILD_PREFIX, where no
+  flang-rt (hence no intrinsic modules) is installed. Fixed by compiling
+  `omp_lib.F90` with `-fintrinsic-modules-path` = the intrinsic-module
+  directory that this very build just installed into $PREFIX (build.sh
+  and build.bat). Relaunched 18:10–18:12 EDT.
+  Results: **linux-64 `zig_501841f_4`, linux-aarch64 `zig_852aba2_4`
+  (18:17 EDT), osx-arm64 `zig_eb63498_4`, osx-64 `zig_79df4ff_4` (18:20
+  EDT) built, pruned, uploaded**; recipe tests ran both OpenMP programs
+  (`threads=2 max=2` via `use omp_lib`); `scripts/ci-omp.sh channel` PASS
+  on linux-64 and osx-arm64. Windows pending (kappa).
+- **GHA test workflow written** (`.github/workflows/test.yml`, docs/08
+  "Testing built packages"): tests packages built on gamma/omicron/kappa on
+  all six native runner labels from either a channel URL (default
+  universe) or a GitHub pre-release staged by `scripts/stage-release.sh`;
+  smoke + ABI probe; optional promotion of a green release to universe
+  with server-side verification. `scripts/ci-smoke.sh` and the new
+  `scripts/ci-abi.sh` were validated on gamma against universe
+  (smoke PASS, ABI PASS at 23.1.1).
+  `scripts/stage-release.sh 23.1.1 --dry-run` collected all 18 consumer-set
+  files from gamma/omicron/kappa in ~2 min (nothing uploaded).
 - linux-aarch64 23.1.1 cross chain complete on gamma (llvm 34 min, lld,
   flang build 1, flang-rt build 1 in `channel/linux-aarch64`; unvalidated).
 - osx-64 flang-rt (Rosetta, standalone rattler-build) failed only in the

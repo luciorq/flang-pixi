@@ -49,7 +49,12 @@ build:
   # 2: Windows only in practice — build.bat's finclude rename never ran (cmd
   #    for /d + mid-path wildcard) and cross builds left lib\<build-host
   #    triple>; both normalised now. Unix packages at build 1 are correct.
-  number: 2
+  # 3: rebuilt with standalone rattler-build (variants honoured); see
+  #    lld-zig recipe and docs/10 2026-09-18.
+  # 4: OpenMP support — ships the omp_lib Fortran module (all platforms) and,
+  #    on Windows, libomp.dll.a + libatomic.a link shims; llvm-openmp becomes
+  #    a run dependency (host on win). docs/10 2026-09-18.
+  number: 4
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -95,11 +100,21 @@ requirements:
     - if: osx
       then:
         - libcxx
+    # Windows: libomp.dll's export table is turned into a MinGW import
+    # library at build time (see build.bat, OpenMP section).
+    - if: win
+      then:
+        - llvm-openmp
   run:
     # libcxx has no run_exports of its own — must be explicit (see flang-zig).
     - if: osx
       then:
         - libcxx >=21
+    # OpenMP runtime for `flang -fopenmp` (all platforms): conda-forge's
+    # libomp — the same one zig cc / zig c++ code in r-zig-pixi links, so a
+    # process never carries two OpenMP runtimes. We ship only the Fortran
+    # module (omp_lib) and, on Windows, the link shims. docs/10 2026-09-18.
+    - llvm-openmp
   # flang-rt is pure link-time input (static archive + runtime .so) — nothing
   # in it invokes llvm-zig tools at use time, and the lld-zig split's
   # amputation test (docs/10-status-log.md, 2026-08-25) ran fine without any
@@ -152,12 +167,23 @@ tests:
           # the test that caught the osx-arm64 23.1.1 breakage (docs/10).
           - flang modules.f90 -o modules
           - ./modules
+          # OpenMP: directives → libomp, and the omp_lib module we ship.
+          - test -f "$(dirname "$(find "${PREFIX}/lib/clang" -name omp_lib.mod | head -1)")/omp_lib_kinds.mod"
+          - flang -fopenmp omp_directives.f90 -o omp_directives
+          - OMP_NUM_THREADS=2 ./omp_directives
+          - flang -fopenmp omp_lib_use.f90 -o omp_lib_use
+          - OMP_NUM_THREADS=2 ./omp_lib_use
       - if: win
         then:
           - flang.exe hello.f90 -o hello.exe
           - hello.exe
           - flang.exe modules.f90 -o modules.exe
           - modules.exe
+          - flang.exe -fopenmp omp_directives.f90 -o omp_directives.exe
+          - set OMP_NUM_THREADS=2
+          - omp_directives.exe
+          - flang.exe -fopenmp omp_lib_use.f90 -o omp_lib_use.exe
+          - omp_lib_use.exe
     requirements:
       run:
         - flang-zig ==${{ version }}
@@ -165,6 +191,8 @@ tests:
       recipe:
         - hello.f90
         - modules.f90
+        - omp_directives.f90
+        - omp_lib_use.f90
 
 about:
   homepage: https://flang.llvm.org

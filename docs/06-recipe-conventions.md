@@ -1,3 +1,30 @@
+> **Build path decision (2026-09-18): standalone rattler-build everywhere
+> (`scripts/rb-stage.sh` / `.bat`, `pixi run build-*`), `variants.yaml` next
+> to each recipe as the single source of variant truth. `pixi publish` is
+> not used.** Why, measured on lld-zig (docs/10 2026-09-18):
+>
+> | route | `c_stdlib_version` seen | build string | `__glibc` run dep |
+> |---|---|---|---|
+> | standalone `rattler-build --variant-config recipe/variants.yaml` | 2.17 | `zig_db819e7` | `>=2.17` ✅ |
+> | `pixi publish` (as used until 2026-09-18) | derived 2.28 | `zig_3ab91ef` | `>=2.28` ❌ |
+> | `pixi publish --variant-config recipe/variants.yaml` | derived 2.28 (file loses) | `zig_3ab91ef` | `>=2.28` ❌ |
+> | `pixi publish` + `[workspace.build-variants]` / `[workspace.target.linux.build-variants]` in the package manifest | 2.17 | `zig_db819e7` | `>=2.17` ✅ |
+> | `pixi publish` + `platforms = [{ platform = "linux-64", glibc = "2.17" }]` (derived) | 2.17 | `zig_db819e7` | host solve fails: the 2.17 virtual platform rejects build/host deps with higher floors |
+>
+> The pixi path does support what we need (per-platform values via
+> `[workspace.target.<family>.build-variants]`, exact pins as one-element
+> lists), but only from the manifest tables: pixi derives `c_stdlib` /
+> `c_stdlib_version` from the platform's `__glibc` / `__osx` virtual packages
+> (defaults 2.28 / 13.0, source: `pixi_core/workspace/stdlib_variants.rs`),
+> inserts them unless the manifest tables already set the key, and
+> `--variant-config` files rank below that. Choosing the manifest route would
+> mean maintaining the same values twice (TOML for native pixi builds, YAML
+> for the standalone cross/CI builds) — the exact drift that produced the
+> bad packages. One path, one file, plus `scripts/check-stdlib-floor.py`
+> failing any build whose `__glibc`/`__osx`/`sysroot_*` floor exceeds the
+> recipe's `c_stdlib_version`. The per-package `pixi.toml` manifests were
+> removed with this decision; `pixi` remains the workspace/task runner.
+
 # 06 — How the pixi + rattler-build pieces fit together
 
 ## Repository layout

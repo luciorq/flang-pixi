@@ -163,7 +163,10 @@ set "RT_TRIPLE=x86_64-w64-windows-gnu"
 if "%target_platform%"=="win-arm64" set "RT_TRIPLE=aarch64-w64-windows-gnu"
 set "FINC_TRIPLE=x86_64-w64-mingw32"
 if "%target_platform%"=="win-arm64" set "FINC_TRIPLE=aarch64-w64-mingw32"
-for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
+REM Only OUR resource dir: llvm-openmp (host dep since build 4) ships
+REM Library\lib\clang\{18,19,20}\include\omp.h, and looping over clang\* made
+REM the checks below fail on those (first win-64 build-4 attempt).
+for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\finclude\flang\" (
   for /d %%T in ("%%D\lib\*windows-gnu") do if /i not "%%~nxT"=="%RT_TRIPLE%" (
     if not exist "%%D\lib\%RT_TRIPLE%" ( move "%%T" "%%D\lib\%RT_TRIPLE%" >nul && echo runtime dir: %%~nxT -^> %RT_TRIPLE% )
   )
@@ -176,6 +179,55 @@ for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
   if not exist "%%D\finclude\flang\%FINC_TRIPLE%\__fortran_type_info.mod" ( echo ERROR: __fortran_type_info.mod missing under %%D\finclude\flang & exit /b 1 )
   if not exist "%%D\lib\%RT_TRIPLE%\libflang_rt.runtime.a" ( echo ERROR: libflang_rt.runtime.a missing under %%D\lib\%RT_TRIPLE% & exit /b 1 )
 )
+
+REM --- OpenMP: Fortran module + the two MinGW link shims ----------------------
+REM (1) omp_lib.mod / omp_lib_kinds.mod / omp_lib.h built from LLVM's
+REM     openmp\module\omp_lib.F90.var with this flang (see build.sh).
+REM (2) libomp.dll.a: `flang -fopenmp` emits -lomp, and the MinGW driver only
+REM     finds lib<name>.dll.a / <name>.lib, never conda-forge's MSVC-named
+REM     libomp.lib. Generate a MinGW import library from the exports of the
+REM     conda-forge libomp.dll (host dep) with zig's dlltool, so Fortran
+REM     OpenMP binds the SAME libomp.dll that zig cc's C/C++ code uses —
+REM     one OpenMP runtime per process.
+REM (3) libatomic.a: the driver also emits -latomic on Windows; zig's MinGW
+REM     CRT has no libatomic. An empty archive satisfies the reference
+REM     (atomic helpers live in compiler-rt builtins). docs/10 2026-09-18.
+set "OMP_TMP=%SRC_DIR%\omp-mod"
+mkdir "%OMP_TMP%" 2>nul
+for /f "tokens=3" %%V in ('findstr /c:"define KMP_VERSION_BUILD" "%SRC_DIR%\openmp\runtime\src\kmp_version.cpp"') do set "OMP_BUILD=%%V"
+if not defined OMP_BUILD set "OMP_BUILD=20140926"
+powershell -NoProfile -Command "$b='%OMP_BUILD%'; foreach ($f in 'omp_lib.F90','omp_lib.h') { (Get-Content -Raw \"%SRC_DIR%\openmp\module\$f.var\").Replace('@LIBOMP_VERSION_MAJOR@','5').Replace('@LIBOMP_VERSION_MINOR@','0').Replace('@LIBOMP_OMP_YEAR_MONTH@','201611').Replace('@LIBOMP_VERSION_BUILD@',$b).Replace('@LIBOMP_BUILD_DATE@','No_Timestamp') | Set-Content -NoNewline \"%OMP_TMP%\$f\" }"
+if errorlevel 1 ( echo ERROR: omp_lib template substitution failed & exit /b 1 )
+set "OMP_TARGET_FLAG="
+if "%target_platform%"=="win-arm64" set "OMP_TARGET_FLAG=--target=aarch64-w64-windows-gnu"
+pushd "%OMP_TMP%"
+REM -fintrinsic-modules-path: the freshly built intrinsic modules in %PREFIX%
+REM (see build.sh for why); the RT_TRIPLE dir exists after the rename above.
+set "OMP_FINC="
+for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\finclude\flang\%RT_TRIPLE%\iso_c_binding.mod" set "OMP_FINC=%%D\finclude\flang\%RT_TRIPLE%"
+if not defined OMP_FINC ( echo ERROR: freshly built intrinsic modules not found & exit /b 1 )
+"%FLANG_BIN%" -c -fopenmp %OMP_TARGET_FLAG% -fintrinsic-modules-path "%OMP_FINC%" omp_lib.F90 -module-dir "%OMP_TMP%" -o omp_lib.obj
+if errorlevel 1 ( popd & echo ERROR: omp_lib.F90 did not compile & exit /b 1 )
+popd
+for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
+  for %%N in (%RT_TRIPLE% %FINC_TRIPLE%) do if exist "%%D\finclude\flang\%%N" (
+    copy /y "%OMP_TMP%\omp_lib.mod" "%%D\finclude\flang\%%N\" >nul
+    copy /y "%OMP_TMP%\omp_lib_kinds.mod" "%%D\finclude\flang\%%N\" >nul
+    copy /y "%OMP_TMP%\omp_lib.h" "%%D\finclude\flang\%%N\" >nul
+    echo OpenMP Fortran module installed under %%D\finclude\flang\%%N
+  )
+)
+set "OMP_DLL=%LIBRARY_BIN%\libomp.dll"
+if not exist "%OMP_DLL%" ( echo ERROR: %OMP_DLL% missing - llvm-openmp must be a host dependency & exit /b 1 )
+set "DLLTOOL_MACHINE=i386:x86-64"
+if "%target_platform%"=="win-arm64" set "DLLTOOL_MACHINE=arm64"
+python "%RECIPE_DIR%\pe-exports.py" "%OMP_DLL%" > "%OMP_TMP%\libomp.def"
+if errorlevel 1 ( echo ERROR: could not read libomp.dll exports & exit /b 1 )
+"%BUILD_PREFIX%\Library\bin\x86_64-w64-mingw32-zig.exe" dlltool -m %DLLTOOL_MACHINE% -d "%OMP_TMP%\libomp.def" -D libomp.dll -l "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a"
+if errorlevel 1 ( echo ERROR: dlltool failed & exit /b 1 )
+powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a', [byte[]](0x21,0x3C,0x61,0x72,0x63,0x68,0x3E,0x0A))"
+if not exist "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a" ( echo ERROR: libatomic.a not written & exit /b 1 )
+dir "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a" "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a"
 
 REM Strip shared libraries -- mirrors the unix build.sh strip pass. Windows
 REM flang-rt is static-only for now (FLANG_RT_ENABLE_SHARED=OFF, see the

@@ -110,6 +110,10 @@ jobs:
         shell: bash
         run: bash scripts/ci-smoke.sh "$CHANNEL" "$VERSION" 2>&1 | tee smoke.log
 
+      - name: OpenMP (directives + omp_lib, -fopenmp against conda-forge libomp)
+        shell: bash
+        run: bash scripts/ci-omp.sh "$CHANNEL" "$VERSION" 2>&1 | tee omp.log
+
       - name: ABI probe (zig cc ↔ flang)
         if: runner.os != 'Windows'
         shell: bash
@@ -120,7 +124,7 @@ jobs:
         shell: bash
         run: |
           { echo "### ${{ matrix.target }} (${{ matrix.runner }}) — source \`$SOURCE\`, version \`$VERSION\`"
-            echo '```'; grep -E "^(SMOKE|ABI probe|  [a-z].* ok$|.*FAILED)" smoke.log abi.log 2>/dev/null || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo '```'; grep -E "^(SMOKE|OPENMP|ABI probe|  [a-z].* ok$|.*: OK$|.*FAILED)" smoke.log omp.log abi.log 2>/dev/null || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   promote:
     name: promote release to universe

@@ -74,6 +74,13 @@ runs:
           --output-dir "$OUT"
         ls -la "$OUT/${{ inputs.target }}"
 
+    - name: stdlib floor tripwire (docs/10 2026-09-18)
+      shell: bash
+      run: |
+        built=$(ls -t "$OUT/${{ inputs.target }}"/${{ inputs.package }}-*.conda | head -1)
+        pixi exec --spec "python>=3.14" --spec pyyaml python scripts/check-stdlib-floor.py \
+          packages/${{ inputs.package }}/recipe/variants.yaml "$built"
+
     - name: drop work trees before upload
       if: always()
       shell: bash

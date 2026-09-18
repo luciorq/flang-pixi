@@ -287,6 +287,32 @@ if [[ -d "${finc}" ]]; then
       ln -s "${CONDA_TOOLCHAIN_HOST}" "${finc}/${_rt_triple}"
     fi
     test -f "${_finc_dst}/__fortran_type_info.mod" || { echo "ERROR: __fortran_type_info.mod missing in ${_finc_dst}" >&2; exit 1; }
+
+    # --- OpenMP Fortran module (omp_lib / omp_lib_kinds / omp_lib.h) -------
+    # conda-forge's llvm-openmp ships libomp + omp.h but no Fortran module,
+    # and .mod files are compiler-specific, so we build LLVM's own
+    # openmp/module/omp_lib.F90.var with this flang — the same five
+    # placeholders openmp/CMakeLists.txt substitutes (major/minor 5.0, spec
+    # year-month 201611, build number from kmp_version.cpp, no timestamp).
+    # The module is pure bind(c) interfaces onto libomp's stable C ABI, so
+    # it works against conda-forge's runtime (run dep). docs/10 2026-09-18.
+    _omp_src="${SRC_DIR}/openmp/module"
+    _omp_build="$(grep -oE 'KMP_VERSION_BUILD +[0-9]+' "${SRC_DIR}/openmp/runtime/src/kmp_version.cpp" | grep -oE '[0-9]+$')"
+    _omp_tmp="$(mktemp -d)"
+    for f in omp_lib.F90 omp_lib.h; do
+      sed -e "s/@LIBOMP_VERSION_MAJOR@/5/g" -e "s/@LIBOMP_VERSION_MINOR@/0/g" \
+          -e "s/@LIBOMP_OMP_YEAR_MONTH@/201611/g" -e "s/@LIBOMP_VERSION_BUILD@/${_omp_build:-20140926}/g" \
+          -e "s/@LIBOMP_BUILD_DATE@/No_Timestamp/g" "${_omp_src}/${f}.var" > "${_omp_tmp}/${f}"
+    done
+    # -fintrinsic-modules-path: use the iso_c_binding etc. we JUST built (in
+    # $PREFIX); the build-env flang's own cfg points at $BUILD_PREFIX, where
+    # no flang-rt is installed, and a stale/absent module set makes kinds
+    # like c_size_t non-interoperable ("A BIND(C) VALUE dummy argument must
+    # have an interoperable type" on the first build-4 attempt).
+    ( cd "${_omp_tmp}" && "${FLANG_BIN}" -c -fopenmp -fintrinsic-modules-path "${_finc_dst}" omp_lib.F90 -module-dir "${_omp_tmp}" -o omp_lib.o )
+    cp "${_omp_tmp}"/omp_lib.mod "${_omp_tmp}"/omp_lib_kinds.mod "${_omp_tmp}"/omp_lib.h "${_finc_dst}/"
+    rm -rf "${_omp_tmp}"
+    echo "OpenMP Fortran module installed: $(ls "${_finc_dst}" | grep -c omp_lib) files under ${_finc_dst}"
   fi
 else
   echo "WARNING: no ${finc} — pre-LLVM-23 layout? intrinsic modules would then live in flang-zig"

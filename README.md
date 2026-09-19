@@ -13,12 +13,15 @@ including an `-O1` cap on osx-arm64 to dodge a gfortran miscompile that returns
 silently wrong LAPACK results. Closing that gap is what this project is for —
 see [`docs/11-r-zig-integration.md`](docs/11-r-zig-integration.md).
 
-> **Status (2026-09-18): LLVM 23.1.1 generation built on all six subdirs**
-> (zig 0.16.0); smoke-validated on linux-64, osx-arm64, osx-64 and win-64;
-> linux-64 also passes the zig-cc/flang ABI probe and r-zig-pixi's `lapack.R`
-> with LAPACK compiled by this flang. linux-aarch64 and win-arm64 are built
-> but unvalidated (GHA jobs ready). Consumer packages (`lld-zig`,
-> `flang-zig`, `flang-rt-zig`) are being published to prefix.dev `universe`.
+> **Status (2026-09-19): LLVM 23.1.1 generation built on all six subdirs**
+> (zig 0.16.0) and **validated on native hardware for every subdir** —
+> smoke + Fortran OpenMP on GitHub's six runners (`test.yml`), the
+> zig-cc/flang ABI probe on the four unix ones, and r-zig-pixi's `lapack.R`
+> with LAPACK compiled by this flang on linux-64 and osx-arm64. Consumer
+> packages (`lld-zig`, `flang-zig`, `flang-rt-zig`) are on prefix.dev
+> `universe`. win-arm64 needed one more fix than the others: zig's arm64
+> kernel32 import library claims an export arm64 Windows lacks
+> (`__C_specific_handler`); `libcompat_arm64.a` redirects it (docs/10).
 > [`docs/10-status-log.md`](docs/10-status-log.md) is the authoritative
 > record; [`docs/15`](docs/15-landscape-review-2026-09.md) the latest review.
 

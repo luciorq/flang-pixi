@@ -154,3 +154,36 @@ repo, the draft links the mechanism so upstream can reproduce and compare.
 > recipe rather than the wrapper default — the wrapper honors it — plus a
 > post-build check that `llvm-objdump -T` shows no `GLIBC_*` requirement
 > above the declared floor.
+
+---
+
+## 6. zig: bundled mingw-w64 `libarm64/libkernel32.a` lists `__C_specific_handler`, which arm64 kernel32.dll does not export
+
+**Repo:** `ziglang/zig` (`lib/libc/mingw`, the bundled mingw-w64 import
+libraries); upstream mingw-w64 already restricts the entry
+(`lib-common/kernel32.def.in`: `F_X64(__C_specific_handler)` /
+`F_ARM32(__C_specific_handler)`).
+**Title:** `aarch64-windows-gnu: linking -lkernel32 ahead of the CRT imports __C_specific_handler from KERNEL32.dll → STATUS_ENTRYPOINT_NOT_FOUND on arm64 Windows`
+
+> Cross-compiling LLVM 23 for `aarch64-windows-gnu` with `zig cc` links
+> fine, but every resulting executable fails to start on arm64 Windows 11
+> with exit code `0xC0000139` (STATUS_ENTRYPOINT_NOT_FOUND). Resolving each
+> import with Microsoft's arm64 import libraries and the real arm64
+> `ucrtbase.dll` export table leaves exactly one unsatisfiable entry:
+> `__C_specific_handler` imported from `KERNEL32.dll`. On x64 kernel32
+> exports it (forwarder to ntdll); on arm64 neither kernel32 nor ntdll
+> does — it comes from the UCRT (`api-ms-win-crt-private-l1-1-0.dll`) or
+> vcruntime140. zig's `libarm64/libkernel32.a` still carries the x64
+> entry, while upstream mingw-w64 limits it to x64/arm32. A plain
+> `zig cc -target aarch64-windows-gnu t.c` resolves the symbol from the
+> private api set (correct), but `zig cc t.c -lkernel32` — what CMake's
+> MinGW platform module emits on every link line — resolves it from
+> KERNEL32 because lld keeps the first definition it sees.
+> Workaround: a one-symbol import library for
+> `api-ms-win-crt-private-l1-1-0.dll` (`zig dlltool -m arm64 -d csh.def`)
+> placed anywhere on the link line. Fix: drop the entry from the arm64
+> kernel32 import library (sync with mingw-w64 master).
+
+(Earlier draft blamed a missing aarch64 `setjmp` implementation; the arm64
+UCRT does export `__intrinsic_setjmpex`, so that report was wrong and has
+been withdrawn — docs/10 2026-09-19.)

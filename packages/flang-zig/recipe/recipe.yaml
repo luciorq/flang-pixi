@@ -50,7 +50,13 @@ build:
   #    -fintrinsic-modules-path and flang-rt-zig normalises the dir name.
   # 2: rebuilt with standalone rattler-build (variants honoured — glibc 2.17
   #    sysroot dep / __osx 11.0); see lld-zig recipe and docs/10 2026-09-18.
-  number: 2
+  # 3: win-arm64 rebuild with an aarch64 setjmp shim — a misdiagnosis of the
+  #    0xC0000139 load failure; still broken there, superseded by 4.
+  # 4: win-arm64 rebuild redirecting __C_specific_handler from KERNEL32
+  #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
+  #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
+  #    build number — they were unaffected.
+  number: 4
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:

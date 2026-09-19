@@ -17,7 +17,8 @@ linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  fla
 osx-arm64:     lld-zig-23.1.1-zig_a177b76_1  flang-zig-23.1.1-zig_e52f94e_2  flang-rt-zig-23.1.1-zig_eb63498_4  (older zig_eb63498_3 superseded; zig_a8c41ae_0 / zig_071b5f1_1 / zig_a618626_1: WRONG __osx 13.0 metadata — delete)
 osx-64:        lld-zig-23.1.1-zig_5732dad_0  flang-zig-23.1.1-zig_705a114_1  flang-rt-zig-23.1.1-zig_79df4ff_4  (older _1 superseded)
 win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_4 (+ _2, _1 superseded)
-win-arm64:     lld-zig-23.1.1-zig_279c4b1_0  flang-zig-23.1.1-zig_52d3e10_1  flang-rt-zig-23.1.1-zig_1e4a608_4 (+ _2 superseded; _1 BROKEN layout — delete when convenient)
+win-arm64:     lld-zig-23.1.1-zig_279c4b1_3  flang-zig-23.1.1-zig_52d3e10_4  flang-rt-zig-23.1.1-zig_1e4a608_7 (chain 2 of 2026-09-19, __C_specific_handler redirect; pending native validation)
+               DEAD on universe, all fail to load (0xC0000139) — delete: lld _0 _2, flang _1 _3, flang-rt _1 (broken layout) _2 _4 _6
 ```
 
 Lessons from the first publish: `rattler-build upload prefix` prints nothing

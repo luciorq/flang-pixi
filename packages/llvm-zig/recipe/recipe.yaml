@@ -62,7 +62,13 @@ build:
   # 0: LLVM 23.1.1 generation (2026-09-17). Decision: the 22.1.8 chain is
   # never published (prefix.dev storage); 23.x is the first published
   # generation. Build numbers restart at 0 with the new version.
-  number: 0
+  # 1: win-arm64 rebuild with an aarch64 setjmp shim — a misdiagnosis of the
+  #    0xC0000139 load failure; still broken there, superseded by 2.
+  # 2: win-arm64 rebuild redirecting __C_specific_handler from KERNEL32
+  #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
+  #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
+  #    build number — they were unaffected.
+  number: 2
   # `zig_` prefix in the build string is a deliberate warning label: these
   # artifacts are NOT interchangeable with conda-forge's llvm packages.
   string: zig_${{ hash }}_${{ build_number }}

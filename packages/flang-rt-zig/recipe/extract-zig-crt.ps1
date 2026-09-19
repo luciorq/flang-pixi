@@ -114,6 +114,18 @@ if ($ZigTarget -like 'aarch64*') {
     & $env:ZIG_CC --target=$ZigTarget -O2 -c "$work\wcstold_compat.c" -o "$work\wcstold_compat.o"
     & llvm-ar rs (Join-Path $DestLib 'libmsvcrt.a') "$work\wcstold_compat.o"
     Write-Host "wcstold shim baked into libmsvcrt.a"
+    # zig's arm64 libkernel32.a wrongly claims KERNEL32.dll exports
+    # __C_specific_handler (true on x64 only; arm64 Windows exports it from the
+    # UCRT's private api set). Any link naming -lkernel32 ahead of the CRT
+    # -- CMake does on every MinGW link line -- imports it from KERNEL32 and
+    # fails to load (0xC0000139). libcompat_arm64.a (flang.cfg: -lcompat_arm64)
+    # is a one-symbol import library for the right DLL; lld keeps the first
+    # definition it sees, so the explicit -l wins. docs/10 2026-09-19.
+    [IO.File]::WriteAllLines("$work\csh_arm64.def", [string[]]@('LIBRARY api-ms-win-crt-private-l1-1-0.dll', 'EXPORTS', '__C_specific_handler'), (New-Object System.Text.UTF8Encoding($false)))
+    $zigExe = Join-Path $env:BUILD_PREFIX 'Library\bin\x86_64-w64-mingw32-zig.exe'
+    & $zigExe dlltool -m arm64 -d "$work\csh_arm64.def" -l (Join-Path $DestLib 'libcompat_arm64.a')
+    if ($LASTEXITCODE -ne 0) { throw "libcompat_arm64.a not created" }
+    Write-Host "__C_specific_handler import redirect archived as libcompat_arm64.a"
 }
 
 # Empty archives for the legacy names the driver emits.

@@ -17,14 +17,15 @@ linux-64 ships nothing — it is the parity harness.
 | stage (LLVM **23.1.1**, zig 0.16.0) | linux-64 | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
 |---|---|---|---|---|---|---|
 | build host / mode | gamma, native | omicron, native | omicron, Rosetta | kappa, native | gamma, cross | kappa, cross |
-| 1 · llvm-zig `_0` | ✅ 36 min | ✅ ~70 min | ✅ | ✅ ~2 h | ✅ | ✅ |
-| 1.5 · lld-zig `_0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 3 · flang-rt-zig (`_4` = OpenMP module + Windows shims; `_3` = standalone-rattler-build metadata fix) | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` |
-| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta + GHA Intel) | ✅ **PASS** | ✅ **PASS (GHA arm runner)** | ❌ flang.exe does not start (GHA; diagnosing) |
-| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (GHA Intel)** | ✅ **PASS** | ✅ **PASS (GHA)** | ⬜ blocked on the above |
+| 1 · llvm-zig `_0` (win-arm64: `_2`) | ✅ 36 min | ✅ ~70 min | ✅ | ✅ ~2 h | ✅ | ✅ 91 min |
+| 1.5 · lld-zig `_0` (win-arm64: `_3`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`; win-arm64: `_4`, `-lcompat_arm64`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 3 · flang-rt-zig (`_4` = OpenMP module + Windows shims; `_5` = cross-build finclude fix; `_7` = win-arm64 `libcompat_arm64.a`) | ✅ `_4` | ✅ `_4` | ✅ `_5` | ✅ `_4` | ✅ `_5` | ✅ `_7` |
+| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta + GHA Intel) | ✅ **PASS** | ✅ **PASS (GHA arm runner)** | ✅ **PASS (GHA windows-11-arm, run 35469368755)** |
+| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (GHA Intel)** | ✅ **PASS** | ✅ **PASS (GHA)** | ✅ **PASS (GHA, threads=3)** |
 | ABI probe (zig cc ↔ flang) | ✅ **PASS** (+GHA) | ✅ **PASS (GHA)** | ✅ **PASS (GHA, Intel Mac)** | n/a (unix only) | ✅ **PASS (GHA)** | n/a |
-| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ✅ **PASS (-O2, omicron)** | ⬜ | ⬜ | ⬜ | ⬜ |
+| r-zig contract suite on flang-zig-built R (Rcpp / data.table / minqa incl. package Fortran+OpenMP / pak / ps) | ✅ **PASS** | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ |
 | glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
 | published to prefix.dev `universe` (lld/flang/flang-rt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -56,22 +57,107 @@ ABI probe / CRAN-flang parity checks.
    linux-aarch64 and win-64 need flang branches, a cross-platform
    resource-dir search, and the `flang_rt.runtime` link. Then run
    `lapack.R` at -O2 on osx-arm64 (the platform this project exists for),
-   osx-64 (Rosetta on omicron) and win-64. Rebase the
-   `flang-zig-validation` worktree first (3 commits behind main,
-   uncommitted lock/pixi.toml/verify-bundle changes).
+   osx-64 (Rosetta on omicron) and win-64. (The `flang-zig-validation`
+   worktree is retired — its result is the 2026-09-19 entry below; the
+   CI side is unblocked: r-zig-pixi PR #6 gives every consumer platform a
+   hosted-runner leg.)
 3. **osx-arm64 parity vs CRAN's experimental flang 23** (mac.r-project.org
    `/opt/R/flang-23`): same tests, both compilers, diff.
-4. **Hardware/emulated validation** of linux-aarch64 (qemu-user binfmt on
-   gamma, or an `ubuntu-24.04-arm` runner) and win-arm64
-   (`windows-11-arm` runner).
+4. ~~Hardware validation of linux-aarch64 and win-arm64~~ — done via
+   `test.yml` on `ubuntu-24.04-arm` / `windows-11-arm` (2026-09-18/19);
+   remaining there: r-zig `lapack.R` + contract suite on those two.
 5. **First GHA run**: add `PREFIX_API_KEY` secret, push, dispatch with
    defaults (census + linux-aarch64), read the census numbers, then try
    `targets: linux-64` once to measure stage 1 on a 4-core runner (docs/08).
 6. One informational run: gfortran 16.2 at -O2 on omicron `lapack.R`.
-7. Upstream r-zig-pixi's verify-bundle glibc-ceiling check.
+7. ~~Upstream r-zig-pixi's verify-bundle glibc-ceiling check.~~ Done — on r-zig-pixi `main` via PR #6 (2026-09-19), two-tier (runtime 2.17 hard / bin/toolchain helpers ≤ conda-forge's 2.28 baseline).
 8. Optional/deferred: publish llvm-zig (size decision); the five drafts
    in [12](12-upstream-reports.md) stay unfiled unless the user changes
    that decision.
+
+---
+
+## 2026-09-19 (later) — osx-arm64 consumes flang-zig: r-zig-pixi builds R with it at -O2, lapack.R + contract suite PASS; the -O1 cap is gone
+
+**Ran:** on omicron (macOS 26.4.1, arm64, native), r-zig-pixi working
+tree with `[target.osx-arm64.dependencies]` swapped `gfortran` →
+`flang-zig` + `flang-rt-zig` (23.1.1 from `universe`), vendored config
+regenerated from a real configure with flang, then `pixi run build`,
+`smoke`, `contract`, `check`, `verify-package`.
+
+**Result:** PASS across the board. `check`'s lapack.R passes with R's
+LAPACK compiled by flang-zig at **-O2** — the test that caught gfortran's
+zgesdd miscompile on this platform — and the contract suite (minqa's
+package Fortran through `$(FLIBS)` = `-L<conda>/lib/clang/23/lib/darwin
+-lflang_rt.runtime -lm`) passes. The standalone bundle relocates.
+
+**Diagnosis:** the four interface contracts hold on osx-arm64 with one
+shape difference worth knowing: the resource-dir subdir is `darwin`, not
+a triple, so consumers must glob `lib/clang/*/lib/*/`. r-zig-pixi links
+`libflang_rt.runtime.a` statically and adds zig's libc++ to the modules
+that carry it (Q5: no second dynamic C++ runtime enters the process).
+flang's `-Wfolding-failure` warnings on `exp(real(kind=8))` in three R
+sources are noise.
+
+**Changed:** r-zig-pixi only (build.zig FortranCompiler dispatch,
+pixi.toml/recipe swap, vendored osx-arm64 configs; record in its
+`.github/devdocs/consolidation/PHASE2_FORTRAN.md`).
+
+**Resolves / opens:** docs/11's osx-arm64 goal is met on the R side;
+next-action 2 continues with osx-64 (Rosetta on omicron), then win-64.
+Table row updated.
+
+---
+
+## 2026-09-19 — r-zig-pixi's full package-compilation contract passes on R built with flang-zig 23.1.1 (linux-64); r-zig-pixi PR #6 merged (5-platform hosted CI)
+
+**Ran:** in r-zig-pixi's `flang-zig-validation` worktree on gamma
+(linux-64, native): `pixi run build` then `pixi run contract` with the
+linux-64 Fortran deps swapped `flang`/`flang-rt_linux-64` →
+`flang-zig`/`flang-rt-zig` 23.1.1 from
+`file:///home/luciorq/projects/flang-pixi/channel` (channel prepended in
+pixi.toml). No other change on the R side.
+
+**Result:** PASS. `dist/R-4.6.1-slim-zig` built end-to-end and
+`build/testlib-slim/` held all five contract packages — Rcpp (runtime C++
+compile via Makeconf), data.table (OpenMP), minqa (Rcpp-dependent +
+package Fortran through `$(FLIBS)`), pak (recursive R invocation, quoted
+-D flags), ps. Same bar conda-forge flang passes; zero R-side code
+changes — a dependency swap only. (Recorded after the fact from the
+artifacts present in the worktree; the worktree and branch were retired
+the same day, its three-file diff kept at
+`/data/gamma/luciorq/workspaces/temp/r-zig-validation-uncommitted.patch`.)
+
+**Diagnosis:** the four interface contracts in
+[11-r-zig-integration.md](11-r-zig-integration.md) (binary named
+`flang`, runtime in the clang resource dir, explicit FLIBS, no name
+collisions) hold for the heaviest real consumer available. Incidental and
+unrelated to flang: a fresh solve pulled pango 1.58 + split libharfbuzz
+14.3, which break R 4.6.1's cairo compile — r-zig-pixi now pins pango
+1.56.* / harfbuzz 14.2.*; any other R-building repo should before its
+next lockfile refresh.
+
+**Also this day (r-zig-pixi PR #6, merged):** linux-aarch64 and osx-64
+became first-class hosted-CI legs alongside linux-64/osx-arm64/win-64, so
+every platform in the Fortran-convergence plan (docs/11 + r-zig-pixi's
+`.github/devdocs/consolidation/PLAN.md`) now has a CI harness. Three
+findings there matter to this project too: (1) conda's cross *sysroot*
+lib dirs (which ship a glibc) leak from gfortran's FLIBS into
+R_LD_LIBRARY_PATH on gfortran platforms — foreign libc at exec; (2)
+gfortran + a glibc ≥ 2.30 sysroot auto-pre-includes
+`finclude/math-vector-fortran.h` and -O2 loop vectorisation then emits
+libmvec `_ZGVnN2v_log` calls that a 2.17-floor link can never resolve
+(`-fno-tree-loop-vectorize` is the targeted fix; flang has no such
+pre-include); (3) zig's Mach-O linker on x86_64 emits zero headerpad, so
+every `install_name_tool` edit fails unless the link passes
+`-headerpad_max_install_names`.
+
+**Changed:** nothing in this repo. r-zig-pixi: `main` (PR #6), pango/
+harfbuzz pin, consolidation docs.
+
+**Resolves / opens:** closes next-action 7 (glibc-ceiling upstreamed);
+next-action 2 (consume flang-zig off linux-64) is now unblocked on the CI
+side and is r-zig-pixi PLAN.md Phase 2, osx-arm64 first.
 
 ---
 
@@ -275,6 +361,70 @@ ABI probe / CRAN-flang parity checks.
   `api-ms-win-crt-*` set — so the runner failure is neither a wrong-arch
   image nor a missing DLL; it is a silent exit 1 at start-up, to be
   classified by the (quoting-fixed) diagnostics step on the next run.
+  **Classified (run 35445667575, 09:2x EDT): `flang.exe` exits
+  0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND.** Import diff against the working
+  x64 image: the only arm64-specific UCRT import is `__intrinsic_setjmpex`
+  (`api-ms-win-crt-private-l1-1-0.dll`), which arm64 ucrtbase does not
+  export — or so the diff suggested; every lld binary imports it too.
+  **First (wrong) fix**: mingw-w64's aarch64 `setjmp.S` as a shim in
+  `libcompat_arm64.a` on every link; the whole win-arm64 chain was rebuilt
+  on kappa (llvm 1, lld 2, flang 3, flang-rt 6; 09:32–13:01 EDT, driver
+  `kappa-winarm-driver.sh`), every binary verified free of setjmp imports,
+  the consumer set uploaded — and **run 35456836031 (13:03 EDT) still
+  exits 0xC0000139**. Lesson: an import diff against x64 only finds
+  imports that *differ*; the missing entry point was one both builds
+  share.
+  **Real root cause (authoritative, 13:05–13:20 EDT).** Checked every
+  flang.exe import against Microsoft's own arm64 import libraries
+  (`Microsoft.Windows.SDK.CPP.arm64` 10.0.26100 NuGet: `ucrt.lib`,
+  `kernel32.Lib`, `ntdll.lib`) and against the export table of the real
+  arm64 `ucrtbase.dll` (SDK redist) and `vcruntime140.dll` (conda-forge
+  `vc14_runtime` win-arm64): exactly one import is unsatisfiable —
+  **`__C_specific_handler` from `KERNEL32.dll`**, the SEH personality
+  routine every LLVM binary references. x64 kernel32 exports it (forwarder
+  to ntdll); arm64 kernel32 and ntdll do not; on arm64 it is exported by
+  the UCRT (`api-ms-win-crt-private-l1-1-0` → ucrtbase) and by
+  vcruntime140. zig 0.16's bundled mingw-w64 `libarm64/libkernel32.a`
+  still lists it (upstream mingw-w64 master limits that entry to
+  `F_X64`/`F_ARM32`). `__intrinsic_setjmpex`, `longjmp`, `memchr`,
+  `strchr`, `strrchr`, `strstr` and every other CRT import *are* exported
+  by arm64 ucrtbase — the setjmp shim was never needed. Why plain zig
+  works but our builds did not: `zig cc -target aarch64-windows-gnu`
+  resolves the symbol from the private api set (verified on gamma), but
+  CMake appends `-lkernel32 -luser32 …` to every MinGW link line ahead of
+  zig's implicit CRT libraries, and lld keeps the first definition it
+  sees; `zig cc t.c -lkernel32` reproduces the KERNEL32 import exactly.
+  **Fix**: a one-symbol import library for
+  `api-ms-win-crt-private-l1-1-0.dll` (`zig dlltool -m arm64` from a
+  three-line `.def`), merged into `libcompat_arm64.a` with the wcstold shim
+  via an llvm-ar MRI script, on every link of the four cross builds; on
+  gamma the archive wins in every command-line position (before the
+  objects, after them, even after `-lkernel32`). flang-rt-zig ships the
+  same archive as `Library\aarch64-w64-mingw32\lib\libcompat_arm64.a` and
+  flang.cfg adds `-lcompat_arm64` on win-arm64, so CMake projects linked
+  by our flang are covered too; `setjmp_arm64.S` and `-lsetjmp_arm64` are
+  gone. Rebuilding the chain again (llvm 2, lld 3, flang 4, flang-rt 7;
+  driver `kappa-winarm-driver2.sh`, started 13:20 EDT). Tooling added:
+  `scripts/pe-resolve-imports.py` (every import resolved with
+  GetProcAddress on the machine it runs on) now backs the Windows
+  diagnostics step, so a future 0xC0000139 names its symbol on the first
+  run. **Consequence for r-zig-pixi**: narrower than first stated — only
+  code that references `__C_specific_handler` (SEH `__try`/`__except`,
+  LLVM-style crash recovery; not plain setjmp/longjmp, not R itself) and
+  only when a build system places `-lkernel32` ahead of the CRT (CMake
+  does) is affected; the same archive fixes it. Draft 6 in docs/12
+  rewritten accordingly.
+  **Result (17:05 EDT): chain 2 done in 3 h 44 min (llvm 91 min, lld 15,
+  flang 100, flang-rt 15); every binary in llvm/lld/flang now imports
+  `__C_specific_handler` from `api-ms-win-crt-private-l1-1-0.dll`;
+  lld `_3` / flang `_4` / flang-rt `_7` uploaded and indexed on universe
+  within a minute. GHA run 35469368755 (windows-11-arm, 17:07 EDT):
+  `flang version 23.1.1` prints, hello + modules OK → SMOKE PASS;
+  `omp_directives` and `omp_lib_use` (threads=3 max=3) OK → OPENMP PASS.
+  win-arm64 is executed for the first time and all six subdirs are now
+  proven on native hardware.** Dead win-arm64 files on universe (all
+  0xC0000139): lld `_0` `_2`, flang `_1` `_3`, flang-rt `_1` `_2` `_4`
+  `_6` — user deletes (key lacks the scope); docs/14 lists them.
 - **OpenMP assessment (2026-09-18, question from the user).** Measured with
   our flang 23.1.1 + conda-forge `llvm-openmp` 23.1.1 (exists on all six
   subdirs; ships `omp.h` + `libomp.{so,dylib,dll}` + `libomp.lib`, but **no

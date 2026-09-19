@@ -58,7 +58,13 @@ build:
   #    on cross/Rosetta builds → linux-aarch64 and osx-64 build 4 shipped the
   #    build-host directory name and no omp_lib (GHA run 35443411628).
   #    Only those two subdirs are rebuilt at 5; the others stay correct at 4.
-  number: 5
+  # 6: win-arm64 rebuild with an aarch64 setjmp shim — a misdiagnosis of the
+  #    0xC0000139 load failure; still broken there, superseded by 7.
+  # 7: win-arm64 rebuild redirecting __C_specific_handler from KERNEL32
+  #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
+  #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
+  #    build number — they were unaffected.
+  number: 7
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build

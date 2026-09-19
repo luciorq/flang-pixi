@@ -142,8 +142,28 @@ REM correct. Compile it once and put it on every link line.
 powershell -Command "Set-Content -Path '%SRC_DIR%\wcstold_compat.c' -Value '#include <wchar.h>', 'long double wcstold(const wchar_t *n, wchar_t **e) { return (long double)wcstod(n, e); }'"
 "%ZIG_CC%" --target=aarch64-windows-gnu -O2 -c "%SRC_DIR%\wcstold_compat.c" -o "%SRC_DIR%\wcstold_compat.o"
 if %ERRORLEVEL% neq 0 exit /b 1
-set "WCSTOLD_OBJ=%SRC_DIR:\=/%/wcstold_compat.o"
-set "CROSS_ARGS=%CROSS_ARGS% -DCMAKE_EXE_LINKER_FLAGS=%WCSTOLD_OBJ% -DCMAKE_SHARED_LINKER_FLAGS=%WCSTOLD_OBJ%"
+REM Second aarch64 CRT gap (windows-11-arm GHA runner, docs/10 2026-09-19):
+REM zig's arm64 libkernel32.a claims KERNEL32.dll exports __C_specific_handler
+REM (the SEH personality every LLVM binary references). Only x64 kernel32 does;
+REM upstream mingw-w64 limits that entry to x64/arm32, and arm64 Windows
+REM exports it from the UCRT (api-ms-win-crt-private-l1-1-0 -> ucrtbase).
+REM Plain `zig cc` links resolve it from the UCRT, but CMake appends
+REM -lkernel32 to every MinGW link line ahead of zig's implicit CRT libs, so
+REM every exe/dll imported it from KERNEL32 and died at load (0xC0000139
+REM STATUS_ENTRYPOINT_NOT_FOUND). Fix: a one-symbol import library for the
+REM private api set, merged into libcompat_arm64.a; lld takes the first
+REM definition it sees and that archive is the first thing on the link line.
+(echo LIBRARY api-ms-win-crt-private-l1-1-0.dll& echo EXPORTS& echo __C_specific_handler) > "%SRC_DIR%\csh_arm64.def"
+"%BUILD_PREFIX%\Library\bin\x86_64-w64-mingw32-zig.exe" dlltool -m arm64 -d "%SRC_DIR%\csh_arm64.def" -l "%SRC_DIR%\libcsh_arm64.a"
+if %ERRORLEVEL% neq 0 exit /b 1
+REM One archive (wcstold shim + the import redirect) = one linker-flag token.
+REM llvm-ar's MRI script is the only way to merge an archive into an archive.
+del /q "%SRC_DIR%\libcompat_arm64.a" 2>nul
+(echo create %SRC_DIR:\=/%/libcompat_arm64.a& echo addmod %SRC_DIR:\=/%/wcstold_compat.o& echo addlib %SRC_DIR:\=/%/libcsh_arm64.a& echo save& echo end) > "%SRC_DIR%\compat_arm64.mri"
+llvm-ar -M < "%SRC_DIR%\compat_arm64.mri"
+if %ERRORLEVEL% neq 0 exit /b 1
+set "COMPAT_LIB=%SRC_DIR:\=/%/libcompat_arm64.a"
+set "CROSS_ARGS=%CROSS_ARGS% -DCMAKE_EXE_LINKER_FLAGS=%COMPAT_LIB% -DCMAKE_SHARED_LINKER_FLAGS=%COMPAT_LIB%"
 :native_build
 echo WIN_ABI_ARGS=%WIN_ABI_ARGS%
 echo CROSS_ARGS=%CROSS_ARGS%

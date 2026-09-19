@@ -54,7 +54,11 @@ build:
   # 4: OpenMP support — ships the omp_lib Fortran module (all platforms) and,
   #    on Windows, libomp.dll.a + libatomic.a link shims; llvm-openmp becomes
   #    a run dependency (host on win). docs/10 2026-09-18.
-  number: 4
+  # 5: build.sh derived the finclude rename from CONDA_TOOLCHAIN_HOST, unset
+  #    on cross/Rosetta builds → linux-aarch64 and osx-64 build 4 shipped the
+  #    build-host directory name and no omp_lib (GHA run 35443411628).
+  #    Only those two subdirs are rebuilt at 5; the others stay correct at 4.
+  number: 5
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build

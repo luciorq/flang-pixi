@@ -16,7 +16,11 @@ host="${RB_BUILD_PLATFORM:-$(pixi info --json 2>/dev/null | python3 -c 'import s
 # osx-64 build (tests run under Rosetta) instead of an arm64->x86_64 cross.
 target="${1:-$host}"; [[ $# -gt 0 ]] && shift
 [[ -n "$target" ]] || { echo "cannot determine platform; pass it explicitly" >&2; exit 1; }
-if [[ "$target" == "$host" ]]; then bp=(); test="${RB_TEST:-native}"; else bp=(--build-platform "$host"); test="${RB_TEST:-skip}"; fi
+# Always pass --build-platform: with RB_BUILD_PLATFORM=osx-64 on Apple Silicon
+# it is what makes rattler-build treat the Rosetta build as native (build ==
+# target) instead of an osx-arm64 -> osx-64 cross (first flang-rt build 4).
+bp=(--build-platform "$host")
+if [[ "$target" == "$host" ]]; then test="${RB_TEST:-native}"; else test="${RB_TEST:-skip}"; fi
 RB_OUT_DEFAULT="$root/rb-out"; [[ -d /data/gamma/luciorq/workspaces ]] && RB_OUT_DEFAULT=/data/gamma/luciorq/workspaces/temp/rb-out
 out="${RB_OUT:-$RB_OUT_DEFAULT}"; mkdir -p "$out"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) chan="file:///$(cygpath -m "$root")/channel";; *) chan="file://$root/channel";; esac

@@ -21,9 +21,9 @@ linux-64 ships nothing — it is the parity harness.
 | 1.5 · lld-zig `_0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 3 · flang-rt-zig (`_4` = OpenMP module + Windows shims; `_3` = standalone-rattler-build metadata fix) | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` |
-| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta) | ✅ **PASS** | ⬜ no hardware (GHA job ready) | ⬜ no hardware (GHA job ready) |
-| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ recipe test (Rosetta) | ✅ **PASS** | ⬜ GHA | ⬜ GHA |
-| ABI probe (zig cc ↔ flang) | ✅ **PASS** | ⬜ (22 passed) | ⬜ | ⬜ | ⬜ | ⬜ |
+| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta + GHA Intel) | ✅ **PASS** | ✅ **PASS (GHA arm runner)** | ❌ flang.exe does not start (GHA; diagnosing) |
+| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (GHA Intel)** | ✅ **PASS** | ✅ **PASS (GHA)** | ⬜ blocked on the above |
+| ABI probe (zig cc ↔ flang) | ✅ **PASS** (+GHA) | ✅ **PASS (GHA)** | ✅ **PASS (GHA, Intel Mac)** | n/a (unix only) | ✅ **PASS (GHA)** | n/a |
 | r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
 | published to prefix.dev `universe` (lld/flang/flang-rt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -242,6 +242,32 @@ ABI probe / CRAN-flang parity checks.
   (flang: `sysroot_linux-64 >=2.17`), smoke PASS; verified on universe next
   to the old 2.28 files. Universe now carries a correct 23.1.1 consumer set
   on all six subdirs; the six superseded files remain until deleted.
+- **2026-09-19 — first native CI run of the published packages** (test.yml
+  run 35443411628, all six runner labels; `PREFIX_API_KEY` stored as repo
+  secret): **linux-64, osx-arm64, win-64 green** (smoke incl. derived types,
+  OpenMP incl. `use omp_lib`, ABI probe on unix). **linux-aarch64 and
+  osx-64 failed** on derived types: their flang-rt build 4 still had the
+  build host's finclude directory name and no omp_lib — build.sh keyed the
+  rename on `CONDA_TOOLCHAIN_HOST`, which is only set on the native branch,
+  so the guard was silently false on the cross build and on the Rosetta
+  build that rattler-build classified as cross (rb-stage.sh had not passed
+  `--build-platform osx-64`). Fixed: triple derived from `target_platform`
+  unconditionally, missing finclude now fatal, rb-stage.sh always passes
+  `--build-platform`; **flang-rt build 5 rebuilt for those two subdirs
+  only** (linux-aarch64 `zig_852aba2_5` verified + uploaded 08:46 EDT;
+  osx-64 in progress). **win-arm64 — first execution ever — installs, but
+  `flang --version` exits 1 with no output** (an executable load failure on
+  Windows, not a compile error). Added a Windows-only diagnostics step to
+  test.yml (`scripts/ci-diag-win.ps1`: exit code, PE machine, DLL imports)
+  to classify it on the next run; needs a push.
+  **linux-aarch64 validated on real hardware (run 35443871436, 08:5x EDT):
+  smoke PASS, OpenMP PASS (`threads=3 max=3` through omp_lib), ABI probe
+  PASS (zig cc ↔ flang, aarch64).** The "built but unvalidated" caveat that
+  platform carried since 2026-09-04 is closed.
+  **osx-64 validated on a real Intel Mac (run 35444075028, 09:0x EDT)** with
+  flang-rt `zig_79df4ff_5`: smoke, OpenMP and ABI probe all PASS — the
+  first non-Rosetta proof for that subdir. Five of six subdirs are now
+  proven on native hardware; win-arm64 remains.
 - **OpenMP assessment (2026-09-18, question from the user).** Measured with
   our flang 23.1.1 + conda-forge `llvm-openmp` 23.1.1 (exists on all six
   subdirs; ships `omp.h` + `libomp.{so,dylib,dll}` + `libomp.lib`, but **no

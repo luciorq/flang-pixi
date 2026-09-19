@@ -119,12 +119,19 @@ jobs:
         shell: bash
         run: bash scripts/ci-abi.sh "$CHANNEL" "${{ matrix.target }}" "$VERSION" 2>&1 | tee abi.log
 
+      - name: windows load diagnostics (only when something failed)
+        if: runner.os == 'Windows' && failure()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          pwsh -NoProfile -File scripts/ci-diag-win.ps1 "$env:CHANNEL" "$env:VERSION" 2>&1 | Tee-Object -FilePath diag.log
+
       - name: summary
         if: always()
         shell: bash
         run: |
           { echo "### ${{ matrix.target }} (${{ matrix.runner }}) — source \`$SOURCE\`, version \`$VERSION\`"
-            echo '```'; grep -E "^(SMOKE|OPENMP|ABI probe|  [a-z].* ok$|.*: OK$|.*FAILED)" smoke.log omp.log abi.log 2>/dev/null || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo '```'; grep -E "^(SMOKE|OPENMP|ABI probe|  [a-z].* ok$|.*: OK$|.*FAILED)" smoke.log omp.log abi.log 2>/dev/null || true; [ -f diag.log ] && { echo "--- windows diag"; cat diag.log; }; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   promote:
     name: promote release to universe

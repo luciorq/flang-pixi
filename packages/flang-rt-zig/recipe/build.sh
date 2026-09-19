@@ -274,17 +274,31 @@ fi
 # Rename it to the conda triple, which flang-zig's flang.cfg passes via
 # -fintrinsic-modules-path, and keep a link under the driver's exact
 # Linux triple so the default lookup works there too.
+# The conda triple is derived from target_platform HERE, unconditionally:
+# CONDA_TOOLCHAIN_HOST is only set on the native branch above, so on cross
+# builds (linux-aarch64) and on a Rosetta build that rattler-build saw as
+# cross (osx-64, first build 4) the guard below was silently false, the
+# rename and the OpenMP module never happened, and the packages shipped
+# unusable (GHA run 35443411628: derived types failed on exactly those
+# two subdirs). Must match what flang-zig writes into flang.cfg.
+case "${target_platform}" in
+  linux-64)      _finc_triple="x86_64-conda-linux-gnu" ;;
+  linux-aarch64) _finc_triple="aarch64-conda-linux-gnu" ;;
+  osx-64)        _finc_triple="x86_64-apple-darwin13.4.0" ;;
+  osx-arm64)     _finc_triple="arm64-apple-darwin20.0.0" ;;
+  *) echo "ERROR: no conda triple known for ${target_platform}" >&2; exit 1 ;;
+esac
 finc="${PREFIX}/lib/clang/${MAJOR_VER}/finclude/flang"
 if [[ -d "${finc}" ]]; then
   _finc_src="$(find "${finc}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
-  if [[ -n "${_finc_src}" && -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
-    _finc_dst="${finc}/${CONDA_TOOLCHAIN_HOST}"
+  if [[ -n "${_finc_src}" ]]; then
+    _finc_dst="${finc}/${_finc_triple}"
     if [[ "${_finc_src}" != "${_finc_dst}" ]]; then
       mv "${_finc_src}" "${_finc_dst}"
-      echo "intrinsic modules: $(basename "${_finc_src}") -> ${CONDA_TOOLCHAIN_HOST}"
+      echo "intrinsic modules: $(basename "${_finc_src}") -> ${_finc_triple}"
     fi
     if [[ -n "${_rt_triple:-}" && ! -e "${finc}/${_rt_triple}" ]]; then
-      ln -s "${CONDA_TOOLCHAIN_HOST}" "${finc}/${_rt_triple}"
+      ln -s "${_finc_triple}" "${finc}/${_rt_triple}"
     fi
     test -f "${_finc_dst}/__fortran_type_info.mod" || { echo "ERROR: __fortran_type_info.mod missing in ${_finc_dst}" >&2; exit 1; }
 
@@ -315,7 +329,7 @@ if [[ -d "${finc}" ]]; then
     echo "OpenMP Fortran module installed: $(ls "${_finc_dst}" | grep -c omp_lib) files under ${_finc_dst}"
   fi
 else
-  echo "WARNING: no ${finc} — pre-LLVM-23 layout? intrinsic modules would then live in flang-zig"
+  echo "ERROR: no ${finc} — the intrinsic modules were not installed" >&2; exit 1
 fi
 
 ln -sf "${rtdir}/libflang_rt.runtime.a" "${PREFIX}/lib/libflang_rt.runtime.a"

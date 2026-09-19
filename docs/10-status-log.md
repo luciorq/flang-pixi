@@ -268,6 +268,13 @@ ABI probe / CRAN-flang parity checks.
   flang-rt `zig_79df4ff_5`: smoke, OpenMP and ABI probe all PASS — the
   first non-Rosetta proof for that subdir. Five of six subdirs are now
   proven on native hardware; win-arm64 remains.
+  win-arm64 static analysis (packages pulled from universe, PE headers
+  parsed on gamma): `flang.exe` (155 MB), `flang-23.exe`, `ld.lld.exe` are
+  genuine arm64 images (machine 0xAA64, console subsystem) importing only
+  KERNEL32/ADVAPI32/SHELL32/VERSION/ole32/ntdll and the UCRT
+  `api-ms-win-crt-*` set — so the runner failure is neither a wrong-arch
+  image nor a missing DLL; it is a silent exit 1 at start-up, to be
+  classified by the (quoting-fixed) diagnostics step on the next run.
 - **OpenMP assessment (2026-09-18, question from the user).** Measured with
   our flang 23.1.1 + conda-forge `llvm-openmp` 23.1.1 (exists on all six
   subdirs; ships `omp.h` + `libomp.{so,dylib,dll}` + `libomp.lib`, but **no

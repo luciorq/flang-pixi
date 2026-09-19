@@ -12,12 +12,12 @@ What is on the channel (verify with r-zig-pixi's `scripts/prefix-list-packages.s
 or the GraphQL `packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query):
 
 ```
-linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_3  (older zig_3ab91ef_0 / zig_2190fa2_1 / zig_1e79d9a_1: WRONG __glibc 2.28 metadata — delete)
-linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_1
-osx-arm64:     lld-zig-23.1.1-zig_a177b76_1  flang-zig-23.1.1-zig_e52f94e_2  flang-rt-zig-23.1.1-zig_eb63498_3  (older zig_a8c41ae_0 / zig_071b5f1_1 / zig_a618626_1: WRONG __osx 13.0 metadata — delete)
-osx-64:        lld-zig-23.1.1-zig_5732dad_0  flang-zig-23.1.1-zig_705a114_1  flang-rt-zig-23.1.1-zig_79df4ff_1
-win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_2 (+ _1, superseded)
-win-arm64:     lld-zig-23.1.1-zig_279c4b1_0  flang-zig-23.1.1-zig_52d3e10_1  flang-rt-zig-23.1.1-zig_1e4a608_2 (+ _1, BROKEN layout — delete when convenient)
+linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_4  (older zig_501841f_3 superseded; zig_3ab91ef_0 / zig_2190fa2_1 / zig_1e79d9a_1: WRONG __glibc 2.28 metadata — delete)
+linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_4  (older _1 superseded)
+osx-arm64:     lld-zig-23.1.1-zig_a177b76_1  flang-zig-23.1.1-zig_e52f94e_2  flang-rt-zig-23.1.1-zig_eb63498_4  (older zig_eb63498_3 superseded; zig_a8c41ae_0 / zig_071b5f1_1 / zig_a618626_1: WRONG __osx 13.0 metadata — delete)
+osx-64:        lld-zig-23.1.1-zig_5732dad_0  flang-zig-23.1.1-zig_705a114_1  flang-rt-zig-23.1.1-zig_79df4ff_4  (older _1 superseded)
+win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_4 (+ _2, _1 superseded)
+win-arm64:     lld-zig-23.1.1-zig_279c4b1_0  flang-zig-23.1.1-zig_52d3e10_1  flang-rt-zig-23.1.1-zig_1e4a608_4 (+ _2 superseded; _1 BROKEN layout — delete when convenient)
 ```
 
 Lessons from the first publish: `rattler-build upload prefix` prints nothing

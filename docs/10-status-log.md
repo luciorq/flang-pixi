@@ -20,8 +20,9 @@ linux-64 ships nothing — it is the parity harness.
 | 1 · llvm-zig `_0` | ✅ 36 min | ✅ ~70 min | ✅ | ✅ ~2 h | ✅ | ✅ |
 | 1.5 · lld-zig `_0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 3 · flang-rt-zig | ✅ `_1` | ✅ `_1` | ✅ `_1` | ✅ `_2` | ✅ `_1` | ✅ `_2` (build 1 had build-host-named dirs) |
+| 3 · flang-rt-zig (`_4` = OpenMP module + Windows shims; `_3` = standalone-rattler-build metadata fix) | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` | ✅ `_4` |
 | smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta) | ✅ **PASS** | ⬜ no hardware (GHA job ready) | ⬜ no hardware (GHA job ready) |
+| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ recipe test (Rosetta) | ✅ **PASS** | ⬜ GHA | ⬜ GHA |
 | ABI probe (zig cc ↔ flang) | ✅ **PASS** | ⬜ (22 passed) | ⬜ | ⬜ | ⬜ | ⬜ |
 | r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
@@ -286,6 +287,27 @@ ABI probe / CRAN-flang parity checks.
   EDT) built, pruned, uploaded**; recipe tests ran both OpenMP programs
   (`threads=2 max=2` via `use omp_lib`); `scripts/ci-omp.sh channel` PASS
   on linux-64 and osx-arm64. Windows pending (kappa).
+  Windows needed two more recipe fixes on the way: (a) build.bat's
+  per-target normalisation looped over `Library\lib\clang\*`, which now
+  also contains llvm-openmp's `clang\{18,19,20}\include\omp.h` dirs (host
+  dep) → guard on `finclude\flang` existing; (b) the recipe's Windows
+  existence test `if not exist %LIBRARY_LIB%\flang_rt.runtime.static.lib`
+  could never hold (the runtime is under `lib\clang\23\lib\<triple>\`,
+  MinGW-named) yet had passed silently under every `pixi publish`; replaced
+  by `where /r` checks for the runtime, `omp_lib.mod` and `libomp.dll.a`.
+  The dlltool/libatomic steps themselves worked first time (`libomp.dll.a`
+  191 KB, `libatomic.a` 8 B).
+  **win-64 `zig_03d85fb_4` built and tested 19:01 EDT**: recipe test ran
+  both OpenMP programs against conda-forge's `libomp.dll` through our
+  `libomp.dll.a` (`iterations=1000 sum=500500`, `threads=2 max=2`) —
+  Fortran OpenMP on MinGW Windows works. win-arm64 cross build running.
+  **win-arm64 `zig_1e4a608_4` cross-built 19:1x EDT; both Windows packages
+  uploaded 19:18.** From-channel OpenMP smoke on kappa: PASS (`threads=3
+  max=3`). **flang-rt-zig build 4 is now on universe for all six subdirs**,
+  each depending on `llvm-openmp`. Fortran OpenMP in flang: proven by
+  execution on linux-64, osx-arm64, osx-64 (recipe test under Rosetta) and
+  win-64; linux-aarch64 and win-arm64 carry the same files and await the
+  `test.yml` matrix.
 - **GHA test workflow written** (`.github/workflows/test.yml`, docs/08
   "Testing built packages"): tests packages built on gamma/omicron/kappa on
   all six native runner labels from either a channel URL (default

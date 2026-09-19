@@ -149,7 +149,16 @@ tests:
           - test -f "${PREFIX}/lib/libflang_rt.runtime.a"
       - if: win
         then:
-          - if not exist %LIBRARY_LIB%\flang_rt.runtime.static.lib exit 1
+          # The runtime lives in the clang resource dir under the target
+          # triple (lib\clang\<major>\lib\<arch>-w64-windows-gnu\), MinGW
+          # naming. `where /r` because cmd's `if exist` cannot take a wildcard
+          # mid-path. (The old top-level `flang_rt.runtime.static.lib` check
+          # cannot hold for this layout — no build ever shipped that file —
+          # yet it went unnoticed through every `pixi publish` build; the
+          # first standalone rattler-build test run caught it.)
+          - where /r "%LIBRARY_LIB%\clang" libflang_rt.runtime.a
+          - where /r "%LIBRARY_LIB%\clang" omp_lib.mod
+          - if not exist "%LIBRARY_PREFIX%\x86_64-w64-mingw32\lib\libomp.dll.a" if not exist "%LIBRARY_PREFIX%\aarch64-w64-mingw32\lib\libomp.dll.a" exit 1
 
   # The real proof: compile AND link AND run a Fortran program.
   - script:

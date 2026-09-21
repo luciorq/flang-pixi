@@ -24,8 +24,8 @@ linux-64 ships nothing — it is the parity harness.
 | smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta + GHA Intel) | ✅ **PASS** | ✅ **PASS (GHA arm runner)** | ✅ **PASS (GHA windows-11-arm, run 35469368755)** |
 | Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (GHA Intel)** | ✅ **PASS** | ✅ **PASS (GHA)** | ✅ **PASS (GHA, threads=3)** |
 | ABI probe (zig cc ↔ flang) | ✅ **PASS** (+GHA) | ✅ **PASS (GHA)** | ✅ **PASS (GHA, Intel Mac)** | n/a (unix only) | ✅ **PASS (GHA)** | n/a |
-| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ✅ **PASS (-O2, omicron)** | ⬜ | ⬜ | ⬜ | ⬜ |
-| r-zig contract suite on flang-zig-built R (Rcpp / data.table / minqa incl. package Fortran+OpenMP / pak / ps) | ✅ **PASS** | ✅ **PASS** | ⬜ | ⬜ | ⬜ | ⬜ |
+| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ✅ **PASS (-O2, omicron)** | ✅ **PASS (-O2, Rosetta)** | ✅ **PASS (-O2, kappa, Rdiff 0)** | ✅ **PASS (-O2, GHA arm)** | n/a (r-zig-pixi has no win-arm64) |
+| r-zig contract suite on flang-zig-built R (Rcpp / data.table / minqa incl. package Fortran+OpenMP / pak / ps) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (Rosetta)** | ✅ **PASS (kappa)** | ✅ **PASS (GHA arm)** | n/a |
 | glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
 | published to prefix.dev `universe` (lld/flang/flang-rt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -51,16 +51,15 @@ ABI probe / CRAN-flang parity checks.
    [14](14-publishing-runbook.md) (file lists there are 22.1.8 — regenerate).
    22.1.8 is never published (decision 2026-09-17). Then delete the 22.x
    packages from the local channels.
-2. **Teach r-zig-pixi to consume flang-zig off linux-64** — this is now
-   the critical path. Its `build.zig` (`fortranOne`, `findFlangRt`,
-   `linkFortranRt`) dispatches flang only on linux-x86_64; osx-*,
-   linux-aarch64 and win-64 need flang branches, a cross-platform
-   resource-dir search, and the `flang_rt.runtime` link. Then run
-   `lapack.R` at -O2 on osx-arm64 (the platform this project exists for),
-   osx-64 (Rosetta on omicron) and win-64. (The `flang-zig-validation`
-   worktree is retired — its result is the 2026-09-19 entry below; the
-   CI side is unblocked: r-zig-pixi PR #6 gives every consumer platform a
-   hosted-runner leg.)
+2. **r-zig-pixi Phase 2 (Fortran convergence on flang-zig)** — now
+   tracked on the consumer side in r-zig-pixi's
+   `.github/devdocs/consolidation/PHASE2_FORTRAN.md`: the compiler is a
+   per-target *dependency* decision (build.zig probes for `flang`, `findFlangRt`
+   globs the resource dir, `flang_rt.runtime` linked statically + libc++).
+   osx-arm64 DONE 2026-09-19 (build, lapack.R and the contract suite, all
+   at -O2); next osx-64 → linux-aarch64 → win-64 → win-arm64. This
+   project's part is the contract in [11](11-r-zig-integration.md)
+   (items 5–8 added 2026-09-19 for the Windows and win-arm64 legs).
 3. **osx-arm64 parity vs CRAN's experimental flang 23** (mac.r-project.org
    `/opt/R/flang-23`): same tests, both compilers, diff.
 4. ~~Hardware validation of linux-aarch64 and win-arm64~~ — done via
@@ -425,6 +424,10 @@ side and is r-zig-pixi PLAN.md Phase 2, osx-arm64 first.
   proven on native hardware.** Dead win-arm64 files on universe (all
   0xC0000139): lld `_0` `_2`, flang `_1` `_3`, flang-rt `_1` `_2` `_4`
   `_6` — user deletes (key lacks the scope); docs/14 lists them.
+  Pushed as 14f5171 (user); **full six-target `test.yml` run 35470912534
+  against universe on that commit: all six green** (smoke + OpenMP
+  everywhere, ABI probe on the four unix runners) — the first all-green
+  matrix of the project.
 - **OpenMP assessment (2026-09-18, question from the user).** Measured with
   our flang 23.1.1 + conda-forge `llvm-openmp` 23.1.1 (exists on all six
   subdirs; ships `omp.h` + `libomp.{so,dylib,dll}` + `libomp.lib`, but **no

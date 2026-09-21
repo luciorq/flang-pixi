@@ -9,6 +9,17 @@ package with `.f`/`.f90`) needs a separate compiler. r-zig-pixi's goal is one
 toolchain everywhere; today it cannot have that, and **this project exists to
 close exactly that gap.**
 
+> **Status 2026-09-19.** The consumer side is in motion: r-zig-pixi's
+> `.github/devdocs/consolidation/PHASE2_FORTRAN.md` tracks the platform-by-
+> platform switch from gfortran to `flang-zig` + `flang-rt-zig` 23.1.1.
+> osx-arm64 is done there (build, `check`'s lapack.R and the contract suite,
+> all at -O2); osx-64, linux-aarch64, win-64 follow in that order, then
+> win-arm64. Everything that side consumes is published and native-tested
+> on all six subdirs (docs/10). The interface section below is what the
+> remaining platforms will hit; items 5–8 are new. A full review of the
+> consumer wiring plus every trap worth transferring lives next to the
+> consumer's plan: r-zig-pixi `.github/devdocs/consolidation/FLANG_PIXI_HANDOFF.md`.
+
 ---
 
 ## The gap, precisely
@@ -129,7 +140,20 @@ So the canonical location is
 `$PREFIX/lib/clang/<major>/lib/<llvm-triple>/libflang_rt.runtime.a` — *not*
 `$PREFIX/lib`. Upstream installs it there and our stage 3 leaves it there,
 adding `$PREFIX/lib` symlinks as a convenience only. **Do not "tidy" the
-resource-dir copy away.** ✅
+resource-dir copy away.** ✅ The last path segment is what upstream's driver
+chooses per OS, so a glob (`lib/clang/*/lib/*/`) is the right consumer
+code, as r-zig-pixi's `findFlangRt` does. Measured in the 23.1.1 packages:
+
+| subdir | runtime archive |
+|---|---|
+| linux-64 / linux-aarch64 | `lib/clang/23/lib/x86_64-unknown-linux-gnu/` and `aarch64-unknown-linux-gnu/` |
+| osx-64 / osx-arm64 | `lib/clang/23/lib/darwin/` (fat-style single dir; `.dylib` beside the `.a`) |
+| win-64 / win-arm64 | `Library/lib/clang/23/lib/x86_64-w64-windows-gnu/` and `aarch64-w64-windows-gnu/` |
+
+Link it **statically** everywhere (r-zig-pixi already does) — it is C++,
+so the module that links it also needs a C++ runtime: zig's libc++
+(`link_libcpp = true`) on macOS *and on Windows*; on Linux the archive
+was built with libc++ statically embedded (Q5 below).
 
 **3. `FLIBS` is passed explicitly, because R's configure mis-parses flang.**
 r-zig-pixi already handles this (*"autoconf mis-parses flang's verbose link
@@ -140,7 +164,8 @@ our bug to fix, but do not expect `flang -###` output to be consumable.
 r-zig-pixi depends on plain `flang` + `flang-rt_linux-64` on linux-64. Ours are
 `flang-zig` / `flang-rt-zig` / `llvm-zig`, so both can coexist in one solve and
 linux-64 can keep using conda-forge's while osx/win use ours. Wiring it up is a
-per-target dependency swap in `r-zig-pixi/pixi.toml`:
+per-target dependency swap in `r-zig-pixi/pixi.toml` (done for osx-arm64
+on 2026-09-19, mirrored in its recipe's build/host/run sections):
 
 ```toml
 [target.osx-arm64.dependencies]
@@ -149,6 +174,40 @@ flang-rt-zig = "*"
 ```
 
 plus adding this project's channel.
+
+**5. Windows: `flang.cfg` already carries the driver-side glue.**
+`Library/bin/flang.cfg` in `flang-zig` passes `-fuse-ld=lld` (lld-zig's
+`ld.lld`, no MSVC link.exe anywhere), `-fintrinsic-modules-path` to the
+renamed module dir, and on win-arm64 `-lcompat_arm64`. A consumer that
+links through the *flang driver* inherits all of it; one that links through
+`zig build` (r-zig-pixi) gets none of it and must not need it — it does not:
+`zig` resolves `__C_specific_handler` from the UCRT by itself as long as the
+build never puts `kernel32` explicitly ahead of the CRT (r-zig-pixi's
+build.zig has no such line; CMake projects do — docs/10 2026-09-19).
+
+**6. win-arm64 only: `libcompat_arm64.a` exists for the CMake case.**
+`Library/aarch64-w64-mingw32/lib/libcompat_arm64.a` (flang-rt-zig) holds the
+wcstold shim and a one-symbol import library that redirects
+`__C_specific_handler` to `api-ms-win-crt-private-l1-1-0.dll`. Anything
+built for arm64 Windows with zig cc through CMake (R packages using CMake,
+future r-zig-pixi native tooling) needs it on the link line or fails to
+load with `0xC0000139`; `zig build` links do not.
+
+**7. Fortran OpenMP is a dependency, not a build.**
+`flang-rt-zig` run-depends on conda-forge `llvm-openmp` on every subdir and
+ships `omp_lib.mod` / `omp_lib_kinds.mod` / `omp_lib.h` next to the
+intrinsic modules (plus `libomp.dll.a` and an empty `libatomic.a` on
+Windows so `flang -fopenmp` links against the same `libomp.dll` zig cc's C
+code uses). `SHLIB_OPENMP_FFLAGS=-fopenmp` therefore works for CRAN
+packages on all six subdirs (proven by `ci-omp.sh` on the native
+runners); R core's own configure still leaves the Fortran OpenMP flags
+empty, which is fine — R core has no Fortran OpenMP.
+
+**8. Build numbers per subdir are not uniform.**
+Pin by version (`flang-zig ==23.1.1`), never by build string: the win-arm64
+consumer set is at lld `_3` / flang `_4` / flang-rt `_7`, linux-aarch64 and
+osx-64 flang-rt at `_5`, the rest lower — each bump fixed one subdir only
+(docs/14 has the live list and the dead files still awaiting deletion).
 
 Cost of that dependency pair (linux-64, measured 2026-08-25): **1.5 GiB**
 installed — flang-zig 880 MiB + lld-zig (the linker split out of llvm-zig;

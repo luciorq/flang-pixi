@@ -153,7 +153,15 @@ code, as r-zig-pixi's `findFlangRt` does. Measured in the 23.1.1 packages:
 Link it **statically** everywhere (r-zig-pixi already does) — it is C++,
 so the module that links it also needs a C++ runtime: zig's libc++
 (`link_libcpp = true`) on macOS *and on Windows*; on Linux the archive
-was built with libc++ statically embedded (Q5 below).
+needs none beyond libc (`__cxa_atexit` is its only C++-runtime reference).
+Note that under conda-forge's zig, `link_libcpp` yields the env's *shared*
+`libc++` whenever one is present (docs/16 D1) — always on macOS unless the
+consumer applies the same `ZIG_LIB_DIR` mirror this project uses. Our own
+binaries are static libc++ on every subdir since 2026-09-30 and no longer
+depend on `libcxx`. Consumers calling the conda *wrapper* on Windows without
+`-target x86_64-windows-gnu` hit `WindowsSdkNotFound` on machines without
+Visual Studio (the wrapper's default is MSVC); our flang and the plain `zig`
+never do.
 
 **3. `FLIBS` is passed explicitly, because R's configure mis-parses flang.**
 r-zig-pixi already handles this (*"autoconf mis-parses flang's verbose link

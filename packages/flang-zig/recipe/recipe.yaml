@@ -56,7 +56,9 @@ build:
   #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
   #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
   #    build number — they were unaffected.
-  number: 4
+  # 5: static libc++ on every subdir (ZIG_LIB_DIR mirror, docs/16); macOS
+  #    drops the libcxx dependency. Only osx-arm64/osx-64 were rebuilt.
+  number: 5
   string: zig_${{ hash }}_${{ build_number }}
   script:
     env:
@@ -101,12 +103,8 @@ requirements:
     # archives and shares headers with them; a version skew is an immediate
     # link failure at best.
     - llvm-zig ==${{ version }}
-    # macOS only: zig links conda-forge's libcxx dynamically there (no static
-    # bundling like Linux); its run_exports adds the runtime constraint.
-    # Paired with -Wl,-rpath,$PREFIX/lib in build.sh. See docs/10-status-log.md.
-    - if: osx
-      then:
-        - libcxx
+    # No libcxx on any platform since 2026-09-30: libc++ is zig's, static, on
+    # every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16).
   run:
     # The ONLY stage-1 tool flang invokes at runtime is ld.lld — proven by
     # deleting every llvm-zig file except bin/lld from a working env and
@@ -116,13 +114,6 @@ requirements:
     # 56 MiB lld-zig, not the ~3 GiB llvm-zig (which stays build/host-only).
     # See docs/10-status-log.md (2026-08-25).
     - lld-zig ==${{ version }}
-    # Explicit, learned the hard way: conda-forge's libcxx has NO run_exports
-    # on itself, so a host dep alone adds nothing to run and flang-22 aborts
-    # at load with "Library not loaded: @rpath/libc++.1.dylib" (caught by the
-    # first osx-arm64 smoke). See docs/10-status-log.md.
-    - if: osx
-      then:
-        - libcxx >=21
     # flang's own driver does independent, GCC-style sysroot/CRT-object
     # discovery at link time (it is a Clang-derived driver, not `zig cc` —
     # zig's bundled-libc trick doesn't apply here). flang.cfg points

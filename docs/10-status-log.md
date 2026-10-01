@@ -76,6 +76,88 @@ ABI probe / CRAN-flang parity checks.
 
 ---
 
+## 2026-09-30 (later) — static libc++ on every subdir: ZIG_LIB_DIR mirror, macOS floor fix, two tripwires; both macOS chains rebuilding
+
+**Decision (user):** yes to making flang-zig use zig's bundled libc++
+instead of conda's shared one (docs/16 §3b).
+
+**Ran:** validation only before the rebuild — the mirror block inside a
+gamma env that *has* `libcxx` (wrapper C++ hello: static, GLIBC_2.17, no
+`libc++.so.1`); the same on omicron (exe + dylib link only libSystem,
+exceptions work, minos 11.0); the rendered flang-rt macOS shim rewrites
+both `--target=arm64-apple-darwin20.0.0` and `-target …` to
+`aarch64-macos.11.0-none` (only that form carries the floor through the
+wrapper: `-mmacosx-version-min`, `-mmacos-version-min`,
+`MACOSX_DEPLOYMENT_TARGET`, `arm64-apple-macos11.0`, `-platform_version`
+all measured ineffective or rejected); the Linux tripwire passes the
+published `flang-23` and fails a shared-libc++ binary; the Mach-O tripwire
+fails the current osx-arm64 flang-rt `_4` ("built for macOS 13.0 > declared
+floor 11.0") and passes a static test prefix.
+
+**Changed:** four `build.sh` (mirror block after the ZIG_CC check; macOS
+rpath comments; flang-rt shim; tripwires at the end; llvm-zig build-info
+says static), four `recipe.yaml` (no `libcxx` anywhere; llvm 3, lld 4,
+flang 5, flang-rt 8), docs/11/13/14/16. Chain driver
+`~/chain-osx-static.sh` on omicron (status
+`/tmp/flang-pixi-logs/chain-osx-static.status`): osx-arm64 native then
+osx-64 under Rosetta, prune, upload of the consumer set. Started 08:35
+EDT.
+**osx-arm64 result (10:55 EDT):** llvm 25 min, lld 4, flang 28, flang-rt
+3 (two stage restarts in between: omicron's GitHub link fell to 4 KB/s and
+ssh dropped for ~50 min; fixed by keeping rattler-build's `src_cache`
+across stages in rb-stage.sh/.bat and seeding it from a gamma fetch —
+key `2b82154e31a6401`, see memory/kappa-transfer-constraints). Every
+stage passed the Mach-O tripwire (677/678/679/711 files); the flang-rt
+shim logged `arm64-apple-darwin20.0.0 -> aarch64-macos.11.0-none`.
+Inspected: `flang-23`, `ld.lld`, `libflang_rt.runtime.dylib` depend only
+on `/usr/lib/libSystem.B.dylib`, every member of the runtime archive is
+minos 11.0, packages declare `__osx >=11.0` only (no libcxx). Uploaded:
+lld `zig_a177b76_4`, flang `zig_e52f94e_5`, flang-rt `zig_eb63498_8`.
+**GHA run 36732819993 (macos-15): smoke + OpenMP + ABI probe PASS**
+against those builds — first all-static macOS toolchain of the project.
+osx-64 chain (Rosetta) started 10:55.
+**osx-64 result (12:26 EDT):** llvm 39 min, lld 4, flang 41, flang-rt 7
+under Rosetta, all tripwires green, shim `x86_64-apple-darwin13.4.0 ->
+x86_64-macos.11.0-none`; `flang-23`/`ld.lld`/runtime dylib depend only on
+libSystem, archive members minos 11.0, depends `__osx >=11.0` only.
+Uploaded lld `zig_5732dad_4`, flang `zig_705a114_5`, flang-rt
+`zig_79df4ff_8`. **GHA osx-64 run 36744295319 (macos-15-intel): smoke +
+OpenMP + ABI probe PASS.** Both macOS subdirs now ship static libc++ at
+the 11.0 floor with no libcxx dependency; Linux/Windows unchanged (they
+already were) but now guarded by the same tripwires on their next build.
+
+## 2026-09-30 — zig-feedstock deviations reviewed (build 19); two flang-pixi findings, no builds run
+
+**Ran:** compile probes of conda-forge `zig 0.16.0` build 19 on gamma
+(with/without `libcxx`, with sysroot 2.17/2.28), omicron and kappa, plus a
+read of the feedstock's `recipe.yaml` / `NOTES.md` / `PATCH_MANIFEST.yaml`
+/ wrapper sources at `d24562f`. Written up as
+[16](16-zig-feedstock-deviations-2026-09.md).
+
+**Result:** the feedstock's `Lld.zig-prefer-shared-libcxx` patch makes
+every native `zig c++` link prefer a conda `libc++` when one is in the env
+(no opt-out; `-static-libstdc++` ignored, `-stdlib=` stripped by the
+wrapper). Linux: our binaries are static only because `libcxx` is absent
+from the Linux host envs — adding one dependency would flip them to
+`NEEDED libc++.so.1` without rpath, unnoticed by current checks. macOS:
+`zig_impl_osx-*` run-depends on `libcxx`, so our published `flang-23`/
+`ld.lld` already link `@rpath/libc++.1.dylib` (rpath `@loader_path/../lib`,
+run dep `libcxx >=21` — consistent, but not the static picture ADR-1
+assumed). **Bug:** `libflang_rt.runtime.{a,dylib}` on osx-arm64 (`_4`) and
+osx-64 (`_5`) are built for **minos 13.0** while declaring `__osx >=11.0`
+(flang/lld are 11.0): flang-rt's build.sh passes
+`CMAKE_*_COMPILER_TARGET=${CONDA_TOOLCHAIN_HOST}` on macOS and the wrapper
+drops the version when translating a conda triple, so zig's default 13.0
+wins over `MACOSX_DEPLOYMENT_TARGET`. Windows unaffected (we always pass
+`--target=*-windows-gnu`; the wrapper's MSVC default fails with
+`WindowsSdkNotFound` on SDK-less machines). A conda sysroot in the env
+changes nothing (zig's own 2.17 headers/stubs are used) — docs/13 holds.
+
+**Changed:** docs/16 (new), docs/README, docs/13 pointer, this entry;
+r-zig-pixi handoff addendum. Not yet changed: flang-rt-zig build.sh macOS
+target, the Mach-O minos and `NEEDED libc++` tripwires, the osx flang-rt
+rebuilds (docs/16 §4, item 1).
+
 ## 2026-09-19 (later) — osx-arm64 consumes flang-zig: r-zig-pixi builds R with it at -O2, lapack.R + contract suite PASS; the -O1 cap is gone
 
 **Ran:** on omicron (macOS 26.4.1, arm64, native), r-zig-pixi working

@@ -14,8 +14,10 @@ or the GraphQL `packages(filters:{name:{eq:…}}){variants(includeHidden:true)}`
 ```
 linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_4  (older zig_501841f_3 superseded; zig_3ab91ef_0 / zig_2190fa2_1 / zig_1e79d9a_1: WRONG __glibc 2.28 metadata — delete)
 linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_4  (older _1 superseded)
-osx-arm64:     lld-zig-23.1.1-zig_a177b76_1  flang-zig-23.1.1-zig_e52f94e_2  flang-rt-zig-23.1.1-zig_eb63498_4  (older zig_eb63498_3 superseded; zig_a8c41ae_0 / zig_071b5f1_1 / zig_a618626_1: WRONG __osx 13.0 metadata — delete)
-osx-64:        lld-zig-23.1.1-zig_5732dad_0  flang-zig-23.1.1-zig_705a114_1  flang-rt-zig-23.1.1-zig_79df4ff_4  (older _1 superseded)
+osx-arm64:     lld-zig-23.1.1-zig_a177b76_4  flang-zig-23.1.1-zig_e52f94e_5  flang-rt-zig-23.1.1-zig_eb63498_8  (static libc++, floor 11.0 — 2026-09-30)
+               DEAD (dynamic libc++ / flang-rt minos 13.0 / wrong __osx) — delete: lld _1 _0(zig_a8c41ae), flang _2 _1(zig_071b5f1), flang-rt _4 _3 _1(zig_a618626)
+osx-64:        lld-zig-23.1.1-zig_5732dad_4  flang-zig-23.1.1-zig_705a114_5  flang-rt-zig-23.1.1-zig_79df4ff_8  (static libc++, floor 11.0 — 2026-09-30)
+               DEAD — delete: lld _0, flang _1, flang-rt _5 _4 _1
 win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_4 (+ _2, _1 superseded)
 win-arm64:     lld-zig-23.1.1-zig_279c4b1_3  flang-zig-23.1.1-zig_52d3e10_4  flang-rt-zig-23.1.1-zig_1e4a608_7 (chain 2 of 2026-09-19, __C_specific_handler redirect; pending native validation)
                DEAD on universe, all fail to load (0xC0000139) — delete: lld _0 _2, flang _1 _3, flang-rt _1 (broken layout) _2 _4 _6

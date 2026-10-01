@@ -35,4 +35,7 @@ rattler-build build \
 built=$(ls -t "$out/$target"/${pkg}-*.conda | head -1)
 pixi exec --spec "python>=3.14" --spec pyyaml python "$root/scripts/check-stdlib-floor.py" "$root/packages/$pkg/recipe/variants.yaml" "$built"
 pixi exec --spec "python>=3.14" python "$root/scripts/publish-crossbuilt.py" "$out/$target" "$root/channel/$target"
-rm -rf "$out/bld" "$out/src_cache"
+# Keep src_cache: it holds the ~200 MB LLVM tarball every stage re-fetches
+# otherwise (a transient GitHub error killed an omicron chain at stage 2 on
+# 2026-09-30). Work trees are the space hogs; those go.
+rm -rf "$out/bld"

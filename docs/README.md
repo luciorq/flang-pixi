@@ -30,6 +30,7 @@ current assessment of what is still needed and what can change.
 | 13 | [zig-feedstock coupling](13-zig-feedstock-coupling.md) | glibc 2.17 floor, ceiling tripwire, why feedstock rebuilds can break links |
 | 14 | [Publishing runbook](14-publishing-runbook.md) | Exact per-host upload commands for prefix.dev `universe` |
 | 15 | [Landscape review 2026-09](15-landscape-review-2026-09.md) | **What changed outside the project, what is still needed, what can change** |
+| 16 | [zig-feedstock deviations 2026-09](16-zig-feedstock-deviations-2026-09.md) | What conda-forge's patched zig does differently (shared libc++ preference, baked targets, dropped flags) and what that costs hermeticity here and in R projects |
 
 ## The thirty-second version
 

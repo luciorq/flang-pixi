@@ -32,5 +32,5 @@ if errorlevel 1 exit /b 1
 pixi exec --spec "python>=3.14" python "%ROOT%\scripts\publish-crossbuilt.py" "%RB_OUT%\%TARGET%" "%ROOT%\channel\%TARGET%"
 if errorlevel 1 exit /b 1
 rmdir /s /q "%RB_OUT%\bld" 2>nul
-rmdir /s /q "%RB_OUT%\src_cache" 2>nul
+REM src_cache is kept on purpose (source tarball reuse across stages; see rb-stage.sh)
 exit /b 0

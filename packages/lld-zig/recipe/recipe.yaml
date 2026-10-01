@@ -60,7 +60,9 @@ build:
   #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
   #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
   #    build number — they were unaffected.
-  number: 3
+  # 4: static libc++ on every subdir (ZIG_LIB_DIR mirror, docs/16); macOS
+  #    drops the libcxx dependency. Only osx-arm64/osx-64 were rebuilt.
+  number: 4
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -99,16 +101,9 @@ requirements:
     # Target-platform LLVM: LLVMConfig.cmake + the static archives lld links.
     # See the header comment for why host (cross support) is now safe.
     - llvm-zig ==${{ version }}
-    # macOS only: zig links conda-forge's libcxx dynamically there (no static
-    # bundling like Linux). Paired with -Wl,-rpath,$PREFIX/lib in build.sh.
-    - if: osx
-      then:
-        - libcxx
+    # No libcxx on any platform since 2026-09-30: libc++ is zig's, static, on
+    # every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16).
   run:
-    # libcxx has no run_exports of its own — must be explicit (see flang-zig).
-    - if: osx
-      then:
-        - libcxx >=21
   run_exports:
     weak:
       - ${{ pin_subpackage('lld-zig', upper_bound='x.x') }}

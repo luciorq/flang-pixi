@@ -68,7 +68,9 @@ build:
   #    (no such export on arm64 Windows) to the UCRT via libcompat_arm64.a on
   #    every link (docs/10 2026-09-19). Other subdirs stay at their previous
   #    build number — they were unaffected.
-  number: 2
+  # 3: static libc++ on every subdir (ZIG_LIB_DIR mirror, docs/16); macOS
+  #    drops the libcxx dependency. Only osx-arm64/osx-64 were rebuilt.
+  number: 3
   # `zig_` prefix in the build string is a deliberate warning label: these
   # artifacts are NOT interchangeable with conda-forge's llvm packages.
   string: zig_${{ hash }}_${{ build_number }}
@@ -138,19 +140,9 @@ requirements:
     - ninja
     - python
   host:
-    # macOS only: zig links conda-forge's libcxx DYNAMICALLY there (it does
-    # NOT bundle libc++ statically like on Linux — zig_impl_osx-* itself
-    # depends on libcxx). Making it a real host dep lets its run_exports add
-    # the runtime constraint. build.sh pairs this with -Wl,-rpath,$PREFIX/lib
-    # since zig injects no LC_RPATH. See docs/10-status-log.md (2026-08-25).
-    - if: osx
-      then:
-        - libcxx
+    # No libcxx on any platform since 2026-09-30: libc++ is zig's, static, on
+    # every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16).
   run:
-    # libcxx has no run_exports of its own — must be explicit (see flang-zig).
-    - if: osx
-      then:
-        - libcxx >=21
   run_exports:
     strong:
       - ${{ pin_subpackage('llvm-zig', upper_bound='x.x') }}

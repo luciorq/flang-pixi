@@ -19,9 +19,13 @@ see [`docs/11-r-zig-integration.md`](docs/11-r-zig-integration.md).
 > zig-cc/flang ABI probe on the four unix ones, and r-zig-pixi's `lapack.R`
 > with LAPACK compiled by this flang on linux-64 and osx-arm64. Consumer
 > packages (`lld-zig`, `flang-zig`, `flang-rt-zig`) are on prefix.dev
-> `universe`. win-arm64 needed one more fix than the others: zig's arm64
-> kernel32 import library claims an export arm64 Windows lacks
-> (`__C_specific_handler`); `libcompat_arm64.a` redirects it (docs/10).
+> `universe`. Every binary links zig's **static** libc++ on every subdir
+> (2026-09-30: conda-forge's patched zig prefers a shared libc++; a
+> `ZIG_LIB_DIR` mirror in the build scripts defeats that — docs/16), and
+> build-time tripwires reject shared C++ runtimes and macOS floors above
+> 11.0. win-arm64 needed one extra fix: `libcompat_arm64.a` redirects
+> `__C_specific_handler`, which arm64 Windows does not export from
+> kernel32 (docs/10).
 > [`docs/10-status-log.md`](docs/10-status-log.md) is the authoritative
 > record; [`docs/15`](docs/15-landscape-review-2026-09.md) the latest review.
 

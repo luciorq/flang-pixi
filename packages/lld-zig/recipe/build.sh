@@ -18,6 +18,28 @@ mkdir -p "${ZIG_GLOBAL_CACHE_DIR}"
 : "${ZIG_AR:?zig activation did not run}"
 : "${ZIG_RANLIB:?zig activation did not run}"
 
+# --- zig lib-dir mirror: keep libc++ STATIC on every platform (docs/16) ------
+# conda-forge's zig carries `Lld.zig-prefer-shared-libcxx`: any native link
+# uses a SHARED libc++ whenever <zig-lib-dir>/../../lib/libc++.{so.1,1.dylib}
+# exists — always on macOS (zig_impl_osx-* depends on libcxx), and on Linux
+# the moment any host dep drags libcxx in. No flag opts out (-static-libstdc++
+# is "unused", -stdlib= is stripped by the wrapper). ZIG_LIB_DIR pointed at a
+# real directory of symlinks into zig's lib dir, with no lib/libc++ beside it,
+# makes the probe miss and restores zig's bundled static libc++/libc++abi/
+# libunwind. Measured on gamma (with libcxx present) and omicron, 2026-09-30.
+if [[ "${target_platform}" != win-* ]]; then
+  _zig_lib_src="${BUILD_PREFIX}/lib/zig"
+  [[ -d "${_zig_lib_src}" ]] || { echo "ERROR: zig lib dir not found at ${_zig_lib_src} (conda layout changed?)" >&2; exit 1; }
+  ZIG_LIB_DIR="${SRC_DIR}/zig-libdir-mirror/lib/zig"
+  rm -rf "${SRC_DIR}/zig-libdir-mirror"; mkdir -p "${ZIG_LIB_DIR}"
+  for _e in "${_zig_lib_src}"/* "${_zig_lib_src}"/.[!.]*; do [[ -e "${_e}" ]] && ln -s "${_e}" "${ZIG_LIB_DIR}/"; done
+  export ZIG_LIB_DIR
+  if [[ -e "${ZIG_LIB_DIR}/../../lib/libc++.1.dylib" || -e "${ZIG_LIB_DIR}/../../lib/libc++.so.1" ]]; then
+    echo "ERROR: ZIG_LIB_DIR mirror still has a libc++ sibling — the static-libc++ trick would not work" >&2; exit 1
+  fi
+  echo "ZIG_LIB_DIR=${ZIG_LIB_DIR} (static-libc++ mirror of ${_zig_lib_src})"
+fi
+
 unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
       DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_CPPFLAGS \
       CC CXX AR RANLIB LD NM STRIP 2>/dev/null || true
@@ -91,9 +113,8 @@ else
 [[ -x "${BUILD_PREFIX}/bin/llvm-strip" ]] && STRIP_BIN="${BUILD_PREFIX}/bin/llvm-strip"
 fi
 
-# macOS: zig links conda-forge's libcxx DYNAMICALLY and injects no LC_RPATH —
-# same story and fix as llvm-zig/recipe/build.sh; libcxx is a host dep on osx
-# in recipe.yaml. See docs/10-status-log.md (2026-08-25).
+# macOS: rpath to $PREFIX/lib for our own dylibs (zig injects no LC_RPATH).
+# libc++ is static since 2026-09-30 (ZIG_LIB_DIR mirror above, docs/16).
 if [[ "${target_platform}" == osx-* ]]; then
   export LDFLAGS="-Wl,-rpath,${PREFIX}/lib"
   CMAKE_EXTRA+=("-DCMAKE_INSTALL_RPATH=${PREFIX}/lib")
@@ -203,3 +224,42 @@ mkdir -p "${PREFIX}/share/lld-zig"
   echo "zig_conda_package=$(ls "${BUILD_PREFIX}"/conda-meta/zig*_*.json 2>/dev/null | xargs -rn1 basename | tr '\n' ' ')"
   echo "zig_abi_target=${ZIG_LINUX_ABI_TARGET:-wrapper-default}"
 } > "${PREFIX}/share/lld-zig/zig-toolchain.txt"
+
+# --- tripwires (docs/16): no shared C++ runtime shipped; macOS floor kept ----
+# Fail here, not at a consumer's load: (1) nothing under $PREFIX may depend on
+# a shared libc++/libstdc++ (the zig-feedstock shared-libc++ preference would
+# do exactly that if the ZIG_LIB_DIR mirror above stopped working); (2) on
+# macOS every Mach-O, archive members included, must be built for at most
+# MACOSX_DEPLOYMENT_TARGET (flang-rt-zig shipped minos 13.0 against a declared
+# 11.0 floor until 2026-09-30 because the conda wrapper drops the version when
+# it translates a conda triple).
+_tw_fail() { echo "ERROR: $*" >&2; exit 1; }
+if [[ "${target_platform}" == linux-* ]]; then
+  _tw_od=""; for _c in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump" objdump; do command -v "${_c}" >/dev/null 2>&1 && { _tw_od="${_c}"; break; }; done
+  if [[ -n "${_tw_od}" ]]; then
+    _tw_n=0
+    while IFS= read -r -d '' _f; do
+      _needed=$("${_tw_od}" -p "${_f}" 2>/dev/null | grep -E '^\s*NEEDED' | grep -E 'libc\+\+|libstdc\+\+|libunwind\.so' || true)
+      [[ -n "${_needed}" ]] && _tw_fail "${_f} depends on a shared C++ runtime (${_needed}) — libcxx in the build env? ZIG_LIB_DIR mirror ineffective? see docs/16"
+      _tw_n=$((_tw_n+1))
+    done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.so*' \) -print0 2>/dev/null)
+    echo "C++ runtime tripwire OK: ${_tw_n} ELF files, no shared libc++/libstdc++ (docs/16)"
+  else
+    echo "WARNING: no objdump; skipping shared-C++-runtime tripwire" >&2
+  fi
+elif [[ "${target_platform}" == osx-* ]]; then
+  _tw_floor="${MACOSX_DEPLOYMENT_TARGET:-11.0}"; _tw_n=0
+  command -v otool >/dev/null 2>&1 || _tw_fail "otool not found; cannot run the Mach-O tripwire"
+  while IFS= read -r -d '' _f; do
+    file "${_f}" 2>/dev/null | grep -qE 'Mach-O|ar archive' || continue
+    if otool -L "${_f}" 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qE 'libc\+\+|libstdc\+\+'; then
+      _tw_fail "${_f} depends on a shared C++ runtime ($(otool -L "${_f}" | tail -n +2 | awk '{print $1}' | grep -E 'libc\+\+|libstdc\+\+' | tr '\n' ' ')) — ZIG_LIB_DIR mirror ineffective? see docs/16"
+    fi
+    _minos=$(otool -l "${_f}" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; b=0}' | sort -uV | tail -1)
+    if [[ -n "${_minos}" && "$(printf '%s\n' "${_minos}" "${_tw_floor}" | sort -V | tail -1)" != "${_tw_floor}" ]]; then
+      _tw_fail "${_f} is built for macOS ${_minos} > declared floor ${_tw_floor} (docs/16 D4: pass a zig-form --target with the version)"
+    fi
+    _tw_n=$((_tw_n+1))
+  done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.a' \) -print0 2>/dev/null)
+  echo "Mach-O tripwire OK: ${_tw_n} files, no shared libc++, minos <= ${_tw_floor} (docs/16)"
+fi

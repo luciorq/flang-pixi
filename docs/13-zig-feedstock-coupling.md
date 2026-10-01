@@ -9,7 +9,12 @@ libraries** whose contents depend on wrapper defaults that the feedstock can
 change between *build numbers* of the same zig version.
 
 This document exists because one such change broke the toolchain in
-production (2026-09-03, docs/10). Read this before touching the zig
+production (2026-09-03, docs/10). A second coupling surface — the feedstock's
+**shared-libc++ preference** and its wrapper target translation — is
+measured in [16](16-zig-feedstock-deviations-2026-09.md) (2026-09-30);
+read that for why Linux is static only while `libcxx` stays out of the
+build env, why macOS is always dynamic, and why flang-rt-zig's macOS
+floor came out at 13.0. Read this before touching the zig
 dependency, the wrapper-related build script logic, or when a link starts
 failing with an undefined libc symbol.
 
@@ -18,8 +23,8 @@ failing with an undefined libc symbol.
 | surface | Linux | macOS | Windows |
 |---|---|---|---|
 | C library at link time | **zig-generated glibc stubs** — version chosen by the `-target` triple (`x86_64-linux-gnu.2.17`), NOT by the conda sysroot | host libSystem via conda's `MACOSX_DEPLOYMENT_TARGET` (wrapper folds it into the triple) | **zig's bundled MinGW-w64 CRT**, statically materialized into every binary |
-| C++ runtime | zig's bundled libc++, **static** (ADR-1) | conda-forge `libcxx`, dynamic — the inverse of Linux | zig's bundled libc++, static |
-| what a feedstock rebuild can silently change | default glibc stub version, wrapper flag handling | wrapper flag handling | bundled CRT contents, wrapper flag handling |
+| C++ runtime | zig's bundled libc++, **static** (ADR-1) — kept static by the `ZIG_LIB_DIR` mirror (defense 5) even if `libcxx` enters the env | zig's bundled libc++, **static since 2026-09-30** (defense 5; before: conda `libcxx`, dynamic, because the feedstock prefers a shared libc++ and `zig_impl_osx-*` depends on one) | zig's bundled libc++, static |
+| what a feedstock rebuild can silently change | default glibc stub version, wrapper flag handling, **the shared-libc++ probe** (docs/16 D1) | wrapper flag handling, the shared-libc++ probe, conda-triple translation (docs/16 D4) | bundled CRT contents, wrapper flag handling |
 
 Key subtlety that cost us a day: the conda `sysroot_linux-64` package in the
 build env is **headers only** as far as zig links are concerned. The wrapper
@@ -99,6 +104,18 @@ Layered, in order of importance:
    (name-version-build) and the ABI target used. When something smells like
    toolchain skew, `cat` these from the installed packages instead of
    archaeology through build logs.
+
+5. **`ZIG_LIB_DIR` mirror + two more tripwires (2026-09-30, docs/16).**
+   Every unix `build.sh` points `ZIG_LIB_DIR` at a directory of symlinks
+   into `$BUILD_PREFIX/lib/zig` that has no `lib/libc++` beside it, so the
+   feedstock's shared-libc++ probe misses and zig links its bundled static
+   libc++ on Linux *and* macOS. The end of each script then fails the build
+   if any shipped ELF has `NEEDED libc++.so`/`libstdc++.so`, or any shipped
+   Mach-O (archive members included) has `minos` above
+   `MACOSX_DEPLOYMENT_TARGET` or depends on a shared libc++. flang-rt-zig's
+   macOS build additionally rewrites CMake's conda triple into the zig form
+   (`aarch64-macos.11.0-none`) on the way to the wrapper, because the
+   wrapper drops the version otherwise (that is how minos 13.0 shipped).
 
 ## Rules of thumb going forward
 

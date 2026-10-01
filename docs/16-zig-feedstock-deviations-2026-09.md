@@ -198,16 +198,65 @@ osx-arm64 flang-rt package (rejected: minos 13.0) and a static test prefix
 flang 5, flang-rt 8; only the two macOS chains are rebuilt (Linux/Windows
 packages were already static and need no rebuild). Results in docs/10.
 
+## 3c. Reconciled with the consumer's measurements (2026-10-01)
+
+r-zig-pixi acted on §3 the same day (its `feat-no-host-paths` branch,
+record in its `.github/devdocs/feat-no-host-paths/PLAN.md`) and reported
+back; the handoff's §6 now carries the reconciled text. What it adds to this
+document:
+
+- **D1, operational detail.** `zig build`'s local cache is not keyed on the
+  probe's result: a warm cache hands back shared-libc++ link outputs after
+  `ZIG_LIB_DIR` is switched on; a mirror build needs its own
+  `ZIG_LOCAL_CACHE_DIR` or a cold cache. Plain `zig cc` follows
+  `ZIG_LIB_DIR` on every call. The mirror's `lib/zig` must be a *real*
+  directory: the probe `access()`es `<lib dir>/../../lib/<name>` and the
+  kernel resolves `..` after following symlinks. Linux guard adopted there
+  too (`NEEDED libc++.so*`/`libstdc++.so*` fails their contract suite).
+- **D3, corrected scope.** The MSVC default and the flag drops belong to the
+  `-cc`/`-cxx` *wrappers*; the real binary (`x86_64-w64-mingw32-zig.exe`,
+  which `zig.bat` forwards to) defaults to the gnu ABI, and the host's
+  Windows version reaches neither the PE header versions (6.0) nor
+  `_WIN32_WINNT`.
+- **D2/D4 for Fortran, measured here (omicron, flang-zig `_5`, flang-rt
+  `_8`).** A flang-compiled object is stamped with the *host SDK's* version
+  (26.0) unless `MACOSX_DEPLOYMENT_TARGET`, `-mmacos-version-min` or an
+  `arm64-apple-macos<ver>` target says otherwise (each gives 13.0 when asked;
+  the flag beats the env var, last flag wins). zig's Mach-O linker stamps
+  the link target's floor over newer objects without a word; Apple's `ld`
+  warns and does the same. So a Fortran object's floor must be set at
+  compile time: `-mmacos-version-min=<floor>` in `FFLAGS`/`FCFLAGS`.
+  flang's own macOS link uses Apple's `ld` and the SDK (`SDKROOT`; without
+  it: `library 'System' not found`); `-fuse-ld=lld` works but still needs
+  the SDK's `libSystem.tbd` — the Xcode CLT is a hard requirement for
+  Fortran links on macOS, which this document's "hermetic" ambitions must
+  state. Not adopted: a default `-mmacos-version-min` in `flang.cfg`, since
+  the flag silently overrides a consumer's `MACOSX_DEPLOYMENT_TARGET`.
+- **Runtime archive vs shared library.** `-L<resource dir> -lflang_rt.runtime`
+  picks the shared library on macOS (zig and the flang driver alike; the
+  driver adds an absolute rpath to the env), so packages linked that way
+  load only inside the build env. r-zig-pixi now writes the archive path
+  into `FLIBS`; docs/11 item 9 makes that the consumer rule. A static-only
+  runtime layout is proposed (docs/10 2026-10-01), not decided.
+- **Package targets on macOS.** `-target <arch>-macos.<min>` is not viable
+  for R packages (loses SDK frameworks and headers); `-target
+  <arch>-native.<min>` with explicit `-F`/`-L` into the SDK is under
+  evaluation by r-zig-pixi. §3's bullet recommending a pinned target for
+  the package shims is withdrawn until that report; flang-pixi's own CMake
+  builds keep the zig-form triple because they need no frameworks.
+- **rattler-build notes from the consumer** (not hit here: no staging
+  outputs, no `path:` sources): the staging-output `build_cache` key does
+  not hash `path:` sources; staging outputs get no `PKG_NAME`/`PKG_VERSION`.
+
 ## 4. Recommendations, in order
 
 1. ~~flang-pixi: fix flang-rt-zig's macOS target (D4), add the tripwires, rebuild~~ — done, and extended to static libc++ everywhere (§3b).
 2. flang-pixi docs: docs/13 gets D1/D6 (why Linux is static, why a sysroot
    does not matter), docs/11 gets the macOS libc++ statement and the
    `WindowsSdkNotFound` sentence. (docs/16 = this file; index updated.)
-3. r-zig-pixi: `verify-bundle.sh` assertions for `libc++` on Linux and
-   macOS; `-target` on macOS and Windows in `toolchain/zig-{cc,cxx}`; one
-   `libcxx` version per lockfile; document that macOS R links conda's
-   shared libc++ by feedstock design.
+3. r-zig-pixi: done on its side 2026-09-30/10-01 except the macOS
+   package target (under evaluation, §3c); `-mmacos-version-min=<floor>` for
+   its Fortran compiles is the one new item (§3c).
 4. Both: on every zig build-number bump, diff the feedstock's
    `PATCH_MANIFEST.yaml` + `NOTES.md` and re-run the three probes in §5;
    the interesting rows are the unconditional patches (D1, D7) and the

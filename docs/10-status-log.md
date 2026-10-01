@@ -76,6 +76,45 @@ ABI probe / CRAN-flang parity checks.
 
 ---
 
+## 2026-10-01 — consumer reconciliation: flang's macOS floor and the runtime archive (measurements, no builds)
+
+**Context:** r-zig-pixi adopted static libc++ everywhere on 2026-09-30 and
+reported back on the handoff's §6 with corrections and three questions.
+Answered after measuring on omicron (flang-zig `_5`, flang-rt `_8`, zig
+`_19`); the reconciled text is in r-zig-pixi's `FLANG_PIXI_HANDOFF.md` §6
+and docs/16 §3c, consumer rules in docs/11 items 9–10.
+
+**Ran / found:**
+- `flang -c` on macOS stamps `LC_BUILD_VERSION minos` with the host SDK's
+  version (26.0 on omicron). `MACOSX_DEPLOYMENT_TARGET=13.0`,
+  `-mmacos-version-min=13.0`, `--target=arm64-apple-macos13.0` → 13.0. The
+  flag beats the env var (flag 11.0 + env 13.0 → 11.0, silently); the last
+  flag wins. So a `flang.cfg` default would override consumers' env — not
+  adopted; consumers put the flag in FFLAGS instead.
+- zig's Mach-O linker stamps the link target's floor over newer objects
+  with no warning (26.0 object into `-target aarch64-macos.13.0` → 13.0);
+  Apple's `ld` warns ("built for newer 'macOS' version") and stamps 13.0.
+- flang's own macOS link runs Apple's `ld`, needs `SDKROOT` ("library
+  'System' not found" without it), links `@rpath/libflang_rt.runtime.dylib`
+  with an absolute rpath to the env's `lib`; `-fuse-ld=lld` works but still
+  needs the SDK's `libSystem.tbd`.
+- `-L<resource dir> -lflang_rt.runtime` via zig picks the dylib on macOS.
+  Our Linux packages also ship the `.so` beside the `.a` in the resource
+  dir (`FLANG_RT_ENABLE_SHARED=ON`). Proposal, pending the user's call: a
+  static-only runtime on all six subdirs (flang-rt build 9; the flang
+  driver then links the archive by itself; one less relocation trap; the
+  hermeticity goal has no use for the shared runtime). Consumer rule either
+  way: link the archive path.
+- Windows correction from the consumer: the real
+  `x86_64-w64-mingw32-zig.exe` defaults to the gnu ABI; MSVC-default and
+  flag-dropping are the `zig_win-64` wrapper's only. docs/16 D3 reworded.
+- Build numbers per subdir are what universe holds since the 2026-09-30
+  prune (18 files; docs/14): the static-libc++ rebuild changed numbers on
+  the two macOS subdirs only, Linux/Windows were static already.
+
+**Changed:** docs/06, 11, 16, this entry; r-zig-pixi handoff §6 (owned
+here). No packages touched.
+
 ## 2026-09-30 (later) — static libc++ on every subdir: ZIG_LIB_DIR mirror, macOS floor fix, two tripwires; both macOS chains rebuilding
 
 **Decision (user):** yes to making flang-zig use zig's bundled libc++
@@ -125,6 +164,14 @@ Uploaded lld `zig_5732dad_4`, flang `zig_705a114_5`, flang-rt
 OpenMP + ABI probe PASS.** Both macOS subdirs now ship static libc++ at
 the 11.0 floor with no libcxx dependency; Linux/Windows unchanged (they
 already were) but now guarded by the same tripwires on their next build.
+Pushed as 91064c8 (user); **full six-target `test.yml` run 36799131977 on
+that commit: all six green** (smoke + OpenMP everywhere, ABI probe on the
+four unix runners) with the static-libc++ macOS packages on universe.
+**universe pruned (user supplied a key with the delete scope):** 14 dead
+files removed via `batchDeletePackageVariants` (osx-arm64/osx-64 dynamic-
+libc++ sets, every pre-fix win-arm64 build); the channel now holds exactly
+the 18 live consumer files (docs/14). `scripts/prune-universe.py` encodes
+the rule (newest build per subdir) with a dry run by default.
 
 ## 2026-09-30 — zig-feedstock deviations reviewed (build 19); two flang-pixi findings, no builds run
 

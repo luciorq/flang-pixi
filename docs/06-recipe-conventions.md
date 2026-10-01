@@ -84,6 +84,16 @@ recipe = "recipe/recipe.yaml"
 > **`[workspace]` channel list** — which is why `../../channel` belongs there,
 > first, so a freshly rebuilt stage wins over anything cached.
 >
+> Two rattler-build cache behaviours reported by r-zig-pixi (2026-10-01),
+> not exercised here but worth knowing before adding either feature: the
+> staging-output `build_cache` under `<output-dir>/build_cache` is keyed
+> without hashing `path:` sources, so a local rebuild after editing them
+> reuses the old output (delete that directory first); and a staging
+> output sees no `PKG_NAME`/`PKG_VERSION`, so pass what its script needs
+> through `script: {file, env}`. Our recipes use `url:` sources and no
+> staging outputs. Separately, keep `src_cache` across stages (rb-stage
+> does since 2026-09-30): it holds the 277 MB LLVM tarball.
+>
 > A top-level `channels` key directly under `[package.build]` is deprecated;
 > pixi warns about it.
 

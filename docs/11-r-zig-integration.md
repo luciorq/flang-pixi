@@ -217,6 +217,26 @@ consumer set is at lld `_3` / flang `_4` / flang-rt `_7`, linux-aarch64 and
 osx-64 flang-rt at `_5`, the rest lower — each bump fixed one subdir only
 (docs/14 has the live list and the dead files still awaiting deletion).
 
+**9. Link the runtime archive by path, not `-lflang_rt.runtime`.**
+The resource dir holds `libflang_rt.runtime.a` *and* a shared library on
+every subdir, and `lib/` symlinks to both. `-L<dir> -lflang_rt.runtime`
+takes the shared one on macOS (zig and the flang driver alike; the driver
+also records an absolute rpath to the env's `lib`), so a package built that
+way loads only where the toolchain is installed. r-zig-pixi's Makeconf now
+writes `FLIBS = <dir>/libflang_rt.runtime.a -lm` (found 2026-09-30 when
+quadprog and minqa failed to load from a relocated tree). A static-only
+layout is proposed on this side (docs/10 2026-10-01); the archive-path rule
+works before and after.
+
+**10. macOS: set the Fortran floor at compile time, and keep the SDK.**
+flang stamps objects with the host SDK's version unless told otherwise;
+`-mmacos-version-min=<floor>` in `FFLAGS`/`FCFLAGS` fixes it (the flag beats
+`MACOSX_DEPLOYMENT_TARGET`; the last flag wins). zig's linker then does not
+relabel newer objects silently into a lower floor. flang's macOS link needs
+Apple's `ld` and the SDK (`SDKROOT`; `-fuse-ld=lld` still needs
+`libSystem.tbd`): the Xcode Command Line Tools are a requirement of any
+tier that compiles Fortran on macOS. Measured 2026-10-01, docs/16 §3c.
+
 Cost of that dependency pair (linux-64, measured 2026-08-25): **1.5 GiB**
 installed — flang-zig 880 MiB + lld-zig (the linker split out of llvm-zig;
 llvm-zig itself is build-time only and never enters the solve) + flang-rt +

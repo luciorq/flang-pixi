@@ -83,8 +83,8 @@ Specifics:
 - Stage 1 applies conda-forge's `AddLLVM.cmake` patch (`NOT APPLE AND ARG_SONAME`
   → `ARG_SONAME`) so shared-library naming matches Linux. Kept for install-layout
   consistency even though we build static.
-- The runtime installs as `libflang_rt.runtime.dylib`, not `.so`; stage 3's
-  `build.sh` symlinks whichever it finds.
+- The runtime is static-only since flang-rt build 9 (2026-10-01): only
+  `libflang_rt.runtime.a` is installed and symlinked into `lib/`.
 - Apple's linker vs zig's LLD: the wrapper auto-promotes to `-fuse-ld=lld` when
   it sees Mach-O flags like `-exported_symbols_list` or `-force_load`. LLVM's
   build uses those, so the LLD MachO path will be exercised.

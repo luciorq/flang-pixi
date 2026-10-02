@@ -170,7 +170,7 @@ and the typeinfo/EH machinery are the ones to watch).
 **Open question Q5.** Resolve empirically once stage 3 builds:
 
 ```bash
-nm -D --defined-only $PREFIX/lib/libflang_rt.runtime.so | grep -E '_Znwm|_ZdlPv|__cxa_throw'
+nm -D --defined-only <consumer>.so | grep -E '_Znwm|_ZdlPv|__cxa_throw|_ZN7Fortran'   # runtime is a hidden-visibility static archive since build 9
 # expect: nothing. Any hit means libc++ is exported and can interpose.
 ```
 

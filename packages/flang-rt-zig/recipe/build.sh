@@ -74,8 +74,15 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 # is defined. See docs/10-status-log.md for how this was found.
 # -g0: `zig cc`/`zig c++` emit full DWARF debug info by default, independent
 # of -O2/-DNDEBUG — see llvm-zig/recipe/build.sh for the full story.
-export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0"
-export CXXFLAGS="-O2 -fPIC -g0"
+# -fvisibility=hidden (build 9, 2026-10-01): the runtime is static-only now
+# and every Fortran .so/.dylib that links it statically used to re-export its
+# ~1,100 symbols (docs/16 §3d). Hidden visibility in the objects is the only
+# mechanism that works under zig's Mach-O linker (which ignores
+# -exported_symbols_list); on ELF it is equivalent to the version script a
+# consumer would otherwise need. flang-rt has no option for it, so it is set
+# here; compiler-rt's builtins (same runtimes build) already hide theirs.
+export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0 -fvisibility=hidden"
+export CXXFLAGS="-O2 -fPIC -g0 -fvisibility=hidden -fvisibility-inlines-hidden"
 
 MAJOR_VER="${PKG_VERSION%%.*}"
 
@@ -274,7 +281,7 @@ cmake -G Ninja -S runtimes -B build \
   -DLLVM_DIR="${PREFIX}/lib/cmake/llvm" \
   -DLLVM_CMAKE_DIR="${PREFIX}/lib/cmake/llvm" \
   -DLLVM_ENABLE_RUNTIMES="compiler-rt;flang-rt" \
-  -DFLANG_RT_ENABLE_SHARED=ON \
+  -DFLANG_RT_ENABLE_SHARED=OFF \
   -DFLANG_RT_ENABLE_STATIC=ON \
   -DFLANG_RT_INCLUDE_TESTS=OFF \
   -DCOMPILER_RT_BUILD_CRT=ON \
@@ -387,13 +394,13 @@ else
   echo "ERROR: no ${finc} — the intrinsic modules were not installed" >&2; exit 1
 fi
 
+# Static-only since build 9 (FLANG_RT_ENABLE_SHARED=OFF): a shared runtime
+# beside the archive made `-lflang_rt.runtime` pick the .dylib on macOS
+# (packages then loaded only inside the build env) and made Apple's ld fail
+# to link the archive at all when the dylib was on the search path
+# (zig-built dylibs export ___dso_handle). docs/16 §3c-§3d, docs/10
+# 2026-10-01. Only the archive gets the lib/ convenience symlink.
 ln -sf "${rtdir}/libflang_rt.runtime.a" "${PREFIX}/lib/libflang_rt.runtime.a"
-if [[ -f "${rtdir}/libflang_rt.runtime.so" ]]; then
-  ln -sf "${rtdir}/libflang_rt.runtime.so" "${PREFIX}/lib/libflang_rt.runtime.so"
-fi
-if [[ -f "${rtdir}/libflang_rt.runtime.dylib" ]]; then
-  ln -sf "${rtdir}/libflang_rt.runtime.dylib" "${PREFIX}/lib/libflang_rt.runtime.dylib"
-fi
 
 # --- relocate compiler-rt's CRT objects into the clang resource dir --------
 # compiler-rt's own CMake installs clang_rt.crtbegin/crtend and
@@ -429,9 +436,10 @@ if [[ -d "${crt_src_darwin}" ]]; then
 fi
 
 # --- strip shared libraries ---------------------------------------------
-# -g0 (above) stops DWARF debug info from being generated; static linking is
-# not the concern here (this package installs no executables), but the
-# shared runtime (libflang_rt.runtime.so) still carries a full ELF symbol
+# Since build 9 there is no shared runtime, so this pass finds nothing of
+# ours; kept because compiler-rt may still install .so files on some
+# configurations. Original rationale: -g0 (above) stops DWARF debug info
+# from being generated, but a shared library still carries a full ELF symbol
 # table. --strip-unneeded (not --strip-all) is the conventional choice for
 # .so files: it preserves whatever dlopen()/dynamic-linking machinery needs
 # to resolve symbols, only dropping what nothing can reach. Deliberately does
@@ -525,3 +533,23 @@ elif [[ "${target_platform}" == osx-* ]]; then
   done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.a' \) -print0 2>/dev/null)
   echo "Mach-O tripwire OK: ${_tw_n} files, no shared libc++, minos <= ${_tw_floor} (docs/16)"
 fi
+
+# --- tripwires for build 9 (docs/16 §3d): static-only, hidden runtime ------
+_shared=$(find "${PREFIX}/lib" \( -name 'libflang_rt.runtime*.so*' -o -name 'libflang_rt.runtime*.dylib' \) 2>/dev/null | head -3)
+[[ -n "${_shared}" ]] && _tw_fail "a shared flang runtime was installed (${_shared}) — FLANG_RT_ENABLE_SHARED must stay OFF"
+_rt_a=$(ls "${PREFIX}"/lib/clang/*/lib/*/libflang_rt.runtime.a 2>/dev/null | head -1)
+[[ -n "${_rt_a}" ]] || _tw_fail "libflang_rt.runtime.a not found under ${PREFIX}/lib/clang/*/lib/*/"
+_probe_sym=_FortranAioBeginExternalListOutput
+if [[ "${target_platform}" == osx-* ]]; then
+  _vis=$(nm -m "${_rt_a}" 2>/dev/null | grep -E " _${_probe_sym}\$" | head -1)
+  echo "${_vis}" | grep -q "private external" || _tw_fail "runtime symbol ${_probe_sym} is not hidden in ${_rt_a}: '${_vis}' — -fvisibility=hidden did not reach the runtime objects"
+else
+  _tw_od=""; for _c in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump"; do [[ -x "${_c}" ]] && { _tw_od="${_c}"; break; }; done
+  if [[ -n "${_tw_od}" ]]; then
+    _vis=$("${_tw_od}" -t "${_rt_a}" 2>/dev/null | grep -E " ${_probe_sym}\$" | head -1)
+    echo "${_vis}" | grep -q "\.hidden" || _tw_fail "runtime symbol ${_probe_sym} is not hidden in ${_rt_a}: '${_vis}' — -fvisibility=hidden did not reach the runtime objects"
+  else
+    echo "WARNING: no llvm-objdump; skipping the hidden-visibility tripwire" >&2
+  fi
+fi
+echo "runtime tripwire OK: static-only archive, ${_probe_sym} hidden (docs/16 §3d)"

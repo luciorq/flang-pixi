@@ -310,9 +310,12 @@ PyPI; each probe rebuilt by a skeptic). Reconciled here:
   `-fvisibility=hidden -fvisibility-inlines-hidden`. flang-rt has no option
   for it (its `AddFlangRT.cmake` applies hidden visibility to CUDA offload
   objects only; `RT_API_ATTRS` carries no visibility), so it is a
-  `CMAKE_CXX_FLAGS` decision in flang-rt-zig's build. Plan: flang-rt build
-  9 = static-only + hidden visibility on all six subdirs; consumers then
-  export nothing of the runtime without doing anything.
+  `CMAKE_CXX_FLAGS` decision in flang-rt-zig's build. **Done the same
+  evening: flang-rt build 9** = static-only + hidden visibility on the four
+  unix subdirs (Windows was static already), two new tripwires, consumer
+  verification on linux-64 and osx-arm64 (docs/10 2026-10-01): a Fortran
+  `.so` now exports its own symbols only, and the flang driver links through
+  Apple's `ld` again.
 
 ## 4. Recommendations, in order
 

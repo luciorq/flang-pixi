@@ -12,14 +12,14 @@ What is on the channel (verify with r-zig-pixi's `scripts/prefix-list-packages.s
 or the GraphQL `packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query):
 
 ```
-linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_4
-linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_5
-osx-arm64:     lld-zig-23.1.1-zig_a177b76_4  flang-zig-23.1.1-zig_e52f94e_5  flang-rt-zig-23.1.1-zig_eb63498_8  (static libc++, floor 11.0)
-osx-64:        lld-zig-23.1.1-zig_5732dad_4  flang-zig-23.1.1-zig_705a114_5  flang-rt-zig-23.1.1-zig_79df4ff_8  (static libc++, floor 11.0)
+linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_9  (flang-rt 9 = static-only, hidden; 2026-10-01)
+linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_9
+osx-arm64:     lld-zig-23.1.1-zig_a177b76_4  flang-zig-23.1.1-zig_e52f94e_5  flang-rt-zig-23.1.1-zig_eb63498_9  (static libc++, floor 11.0; flang-rt 9 static-only, hidden)
+osx-64:        lld-zig-23.1.1-zig_5732dad_4  flang-zig-23.1.1-zig_705a114_5  flang-rt-zig-23.1.1-zig_79df4ff_9  (static libc++, floor 11.0; flang-rt 9 static-only, hidden)
 win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_4
 win-arm64:     lld-zig-23.1.1-zig_279c4b1_3  flang-zig-23.1.1-zig_52d3e10_4  flang-rt-zig-23.1.1-zig_1e4a608_7
 
-Exactly these 18 files, nothing else, since 2026-09-30: every superseded or
+Exactly these 18 files, nothing else (superseded flang-rt `_4`/`_5`/`_8` pruned 2026-10-01 after build 9): every superseded or
 broken build was deleted with `scripts/prune-universe.py --apply` (keeps the
 newest build per subdir of the three consumer packages; dry run without
 `--apply`). The current key has the delete scope.

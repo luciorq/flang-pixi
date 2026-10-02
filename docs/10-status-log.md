@@ -100,11 +100,32 @@ symbols every statically linked Fortran `.so` re-exports.
   zig's linker. R's `SHLIB_FCLD=$(FC)` on macOS is exactly this path.
 - flang-rt has no visibility option (hidden only for CUDA offload objects).
 
-**Decision (this side):** flang-rt build 9 = `FLANG_RT_ENABLE_SHARED=OFF`
-(no `.so`/`.dylib` anywhere; `-lflang_rt.runtime` resolves to the archive)
-and `-fvisibility=hidden -fvisibility-inlines-hidden` for the runtime
-objects, on all six subdirs, then `test.yml` plus an r-zig-pixi re-lock.
-Pending the user's go-ahead (three hosts, ~1 h of builds).
+**Decision (user, 2026-10-01 evening): go.** flang-rt build 9 =
+`FLANG_RT_ENABLE_SHARED=OFF` and `-fvisibility=hidden
+-fvisibility-inlines-hidden` in CFLAGS/CXXFLAGS (compiler-rt builtins in the
+same runtimes build already hide theirs), no `lib/` symlink for a shared
+runtime, two new tripwires at the end of build.sh (no
+`libflang_rt.runtime*.so|dylib` under `$PREFIX/lib`; the archive's
+`_FortranAioBeginExternalListOutput` is `.hidden` / "private external").
+Windows was already static-only and keeps its builds (`_4` win-64, `_7`
+win-arm64). **Built and uploaded in 12 minutes**: gamma linux-64 (4 min,
+123 ELF files tripwire-clean) + linux-aarch64 cross (3 min, 586 steps);
+omicron osx-arm64 (4 min) + osx-64 under Rosetta (8 min), all with
+`stdlib floor OK` and `runtime tripwire OK`. On universe: linux-64
+`zig_501841f_9`, linux-aarch64 `zig_852aba2_9`, osx-arm64 `zig_eb63498_9`,
+osx-64 `zig_79df4ff_9`.
+**Consumer verification from universe:** linux-64 — zero shared runtime
+files, a Fortran `.so` linked by zig exports 2 symbols (was 1,238; 0 runtime
+symbols), the flang driver's `-lflang_rt.runtime` resolves to the archive,
+`flang h.f90` runs with NEEDED libm/libc only, GLIBC_2.16. osx-arm64 — zero
+shared runtime files; zig link (archive path or `-l`) exports 4 symbols;
+**the flang driver through Apple's `ld` now links both the archive path and
+`-lflang_rt.runtime` forms** (was the `___dso_handle` fixup error), results
+depend on `libSystem` only; archive members are "private external".
+**`test.yml` run 36946778124: all six targets green** (the four unix
+runners solved flang-rt `_9`; smoke + OpenMP everywhere, ABI probe on
+unix). universe pruned to the 18 live files (flang-rt `_4`/`_5`/`_8`
+removed).
 
 **Changed:** docs/11 items 9–10, docs/16 §3d, this entry; r-zig-pixi
 handoff §6.

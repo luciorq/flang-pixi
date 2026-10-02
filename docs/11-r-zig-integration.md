@@ -224,17 +224,19 @@ takes the shared one on macOS (zig and the flang driver alike; the driver
 also records an absolute rpath to the env's `lib`), so a package built that
 way loads only where the toolchain is installed. r-zig-pixi's Makeconf now
 writes `FLIBS = <dir>/libflang_rt.runtime.a -lm` (found 2026-09-30 when
-quadprog and minqa failed to load from a relocated tree). A static-only
-layout is now the plan on this side (docs/16 §3d): the dylib in the search
-path also breaks any *flang-driver* link of the archive through Apple's
-`ld` (zig-built dylibs export `___dso_handle`; the driver adds
-`-lflang_rt.runtime` itself; result `ld: fixup error … '___dso_handle'`).
-Until flang-rt build 9 ships, a driver link on macOS must either keep the
-dylib off `-L` or use `-fuse-ld=lld`; zig-driven links are unaffected. The
-archive-path rule works before and after. Build 9 will also compile the
-runtime with hidden visibility, so a package `.so` stops re-exporting its
-~1,100 runtime symbols; on Linux a version script already achieves that,
-on macOS nothing at link time does (zig ignores `-exported_symbols_list`).
+quadprog and minqa failed to load from a relocated tree). Since flang-rt
+build 9 (2026-10-01) the runtime is **static-only with hidden visibility**
+on every unix subdir (Windows always was static-only): no `.so`/`.dylib`
+exists, `-lflang_rt.runtime` resolves to the archive, the flang driver's own
+link works again through Apple's `ld` (it used to hit `ld: fixup error …
+'___dso_handle'` because zig-built dylibs export `___dso_handle` and the
+driver put the dylib on the line), and a package `.so` that links the
+runtime exports its own symbols only (measured: 2 instead of 1,238 on
+linux-64, 2–4 instead of 828 on osx-arm64). The archive-path `FLIBS` rule
+still works and is still the clearest; `-lflang_rt.runtime` is now equally
+safe. Nothing of the runtime is exported from any consumer, so no version
+script or export list is needed; code that wants the runtime's C API
+(`CFI_*`, ISO_Fortran_binding) must link the archive itself.
 
 **10. macOS: set the Fortran floor at compile time, and keep the SDK.**
 flang stamps objects with the host SDK's version unless told otherwise;

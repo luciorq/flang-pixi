@@ -250,8 +250,9 @@ embedded libc++ does not export symbols that interpose on libstdc++'s**.
 *Resolve by* (two minutes, as soon as stage 3 builds):
 
 ```bash
-nm -D --defined-only $PREFIX/lib/libflang_rt.runtime.so \
-  | grep -E '_Znwm|_ZdlPv|__cxa_throw|__cxa_begin_catch'
+# (since build 9 the runtime is a static archive with hidden visibility;
+#  check that nothing C++-runtime-ish is exported by a consumer that links it)
+nm -D --defined-only <consumer>.so | grep -E '_Znwm|_ZdlPv|__cxa_throw|_ZN7Fortran'
 # expect no output
 ```
 

@@ -67,7 +67,10 @@ build:
   # 8: static libc++ on every subdir (ZIG_LIB_DIR mirror) and the macOS
   #    floor fix (runtime built for 11.0, not 13.0) — docs/16. macOS drops the
   #    libcxx dependency. Only osx-arm64/osx-64 were rebuilt.
-  number: 8
+  # 9: static-only runtime (no .so/.dylib anywhere) built with hidden
+  #    visibility — docs/16 §3d, docs/10 2026-10-01. Unix subdirs only;
+  #    Windows was already static-only and keeps its build.
+  number: 9
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -121,7 +124,8 @@ requirements:
     # process never carries two OpenMP runtimes. We ship only the Fortran
     # module (omp_lib) and, on Windows, the link shims. docs/10 2026-09-18.
     - llvm-openmp
-  # flang-rt is pure link-time input (static archive + runtime .so) — nothing
+  # flang-rt is pure link-time input (a static archive; no shared runtime
+  # since build 9) — nothing
   # in it invokes llvm-zig tools at use time, and the lld-zig split's
   # amputation test (docs/10-status-log.md, 2026-08-25) ran fine without any
   # llvm-zig files present. llvm-zig's strong run_export would re-add the

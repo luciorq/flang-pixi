@@ -76,6 +76,39 @@ ABI probe / CRAN-flang parity checks.
 
 ---
 
+## 2026-10-01 (later) — consumer follow-up: `native.<min>` verified, `___dso_handle` trap, runtime symbol re-export; static-only + hidden flang-rt is now the plan
+
+**Context:** r-zig-pixi closed its macOS deployment-target investigation
+(docs/16 §3d) and asked whether flang-pixi wants to hide the ~1,100 runtime
+symbols every statically linked Fortran `.so` re-exports.
+
+**Ran (omicron, flang-zig `_5`, flang-rt `_8`; gamma, linux-64 `_2`/`_4`):**
+- Re-export counts: Linux `.so` 1,238 exports (1,142 runtime), macOS dylib
+  828 (808).
+- Hiding at link time: Linux version script via zig+lld → 25 exports left
+  (`--exclude-libs` rejected by zig); macOS: zig's Mach-O linker accepts
+  but ignores `-exported_symbols_list`, rejects `-unexported_symbols_list`
+  and `-hidden-l`. Apple's ld honours `-hidden-lflang_rt.runtime` only via
+  `-l`, which picks the dylib.
+- **`flang -shared obj <dir>/libflang_rt.runtime.a` through Apple's ld
+  fails** (`fixup error (kind=arm64_adrp_lo12) at
+  __GLOBAL__sub_I_external_unit.cpp … target '___dso_handle'`) with `_4`
+  and `_8` alike: zig-built dylibs export `___dso_handle` (Apple-built ones
+  do not), the driver adds `-lflang_rt.runtime` and the resource dir, and
+  ld binds the archive's static initializer to the dylib's export. Links
+  fine with the dylib off the search path, with `-fuse-ld=lld`, and under
+  zig's linker. R's `SHLIB_FCLD=$(FC)` on macOS is exactly this path.
+- flang-rt has no visibility option (hidden only for CUDA offload objects).
+
+**Decision (this side):** flang-rt build 9 = `FLANG_RT_ENABLE_SHARED=OFF`
+(no `.so`/`.dylib` anywhere; `-lflang_rt.runtime` resolves to the archive)
+and `-fvisibility=hidden -fvisibility-inlines-hidden` for the runtime
+objects, on all six subdirs, then `test.yml` plus an r-zig-pixi re-lock.
+Pending the user's go-ahead (three hosts, ~1 h of builds).
+
+**Changed:** docs/11 items 9–10, docs/16 §3d, this entry; r-zig-pixi
+handoff §6.
+
 ## 2026-10-01 — consumer reconciliation: flang's macOS floor and the runtime archive (measurements, no builds)
 
 **Context:** r-zig-pixi adopted static libc++ everywhere on 2026-09-30 and

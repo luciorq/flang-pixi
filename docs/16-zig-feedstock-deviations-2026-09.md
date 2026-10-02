@@ -248,6 +248,72 @@ document:
   outputs, no `path:` sources): the staging-output `build_cache` key does
   not hash `path:` sources; staging outputs get no `PKG_NAME`/`PKG_VERSION`.
 
+## 3d. Follow-up from the consumer, and two new measurements (2026-10-01, later)
+
+r-zig-pixi finished its omicron verification (macOS 26.4.1, CLT SDK 26.4;
+conda-forge zig 0.16 `_15`/`_19` with the mirror, and upstream 0.16 from
+PyPI; each probe rebuilt by a skeptic). Reconciled here:
+
+- **`-target <arch>-native.13.0` is verified at the binary level** (no
+  macOS 13 load test yet): the OS word must be the literal `native` plus
+  `MAJOR.MINOR` (`aarch64-native.13` is rejected); result `minos 13.0`, no
+  `LC_RPATH` for `-L` dirs, the installed SDK's headers and libSystem. Two
+  SDK search dirs come back by hand at *link* time only:
+  `-F$SDK/System/Library/Frameworks` and `-L$SDK/usr/lib` appended LAST —
+  with the SDK `-L` first, `-lz`/`-liconv`/`-lcurl` silently bind the SDK's
+  `.tbd` stubs against conda's headers on either zig. The conda-forge
+  panic ("for loop over objects with non-equal lengths") and upstream's
+  "unable to resolve dependency /usr/lib/libobjc.A.dylib" occur only when
+  that SDK `-L` is missing; the `-fvisibility=hidden` + `-O3` linker crash
+  reported earlier did not reproduce. `<arch>-macos.13.0` stays unusable
+  (loses `usr/include`: `net/if_media.h` for ps, libDER via AppKit). D1
+  still applies to the pinned form: conda-forge zig links the shared
+  `@rpath/libc++.1.dylib` unless the mirror is on. Measured by me on the
+  0.17 dev snapshot too: `aarch64-native.13.0` with `-F`/`-L` into the SDK
+  links a CoreFoundation program at `minos 13.0`.
+- **flang floor, confirmed from both sides:** objects default to the host
+  version; `-mmacosx-version-min=13.0`, `-mmacos-version-min=13.0`,
+  `--target=arm64-apple-macosx13.0` and `MACOSX_DEPLOYMENT_TARGET=13.0` all
+  work; zig's link relabels silently. r-zig-pixi passes the flag in R's
+  build and inside Makeconf's `FC` so it survives a user's `FFLAGS`. Their
+  "88 archive members at 13.0" was the old flang-rt `_4`; `_8` (on universe
+  since 2026-09-30) is 11.0 throughout — re-lock.
+- **New: zig-built dylibs export `___dso_handle`, and that breaks the
+  flang driver's link of the static runtime on macOS.** Apple-built dylibs
+  do not export it; `libflang_rt.runtime.dylib` (zig-linked) does (1 of
+  1932 exports). The flang driver always adds `-lflang_rt.runtime` and the
+  resource dir to its link line, so a `flang -shared obj
+  <dir>/libflang_rt.runtime.a` through Apple's `ld` sees both the archive
+  and the dylib, binds the archive's static initializer
+  (`__GLOBAL__sub_I_external_unit.cpp`) to the dylib's `___dso_handle` and
+  dies with `ld: fixup error (kind=arm64_adrp_lo12) … target
+  '___dso_handle'`. Same with `_4` and `_8`, with or without the version
+  flag. It links fine when the dylib is not on the search path (an
+  archive-only directory first on `-L`, or `-lflang_rt.runtime` resolving to
+  the archive), with `-fuse-ld=lld`, and with zig's own linker. Apple's ld
+  linking an Apple-compiled object against such a dylib is fine; the trap
+  is exactly "archive static initializer + a `___dso_handle`-exporting
+  dylib on the same line". This is the second bug the shared runtime in the
+  resource dir causes (§3c: `-l` picks the dylib) — a **static-only
+  runtime is now the recommendation, not a proposal** (docs/10).
+- **Symbol re-export, measured:** a Fortran `.so` that links the archive
+  statically re-exports the runtime: Linux 1,238 symbols (1,142 runtime:
+  `_Fortran*`, `_ZN7Fortran*`, CFI_*, …), macOS 828 (808). Hiding them at
+  link time: Linux — a version script works through zig + lld (`{ global:
+  *; local: _Fortran*; _ZN7Fortran*; _ZNK7Fortran*; _ZT[VIS]N7Fortran*;
+  };` leaves 25 exports; `--exclude-libs` is rejected by zig as an
+  unsupported linker arg); macOS — zig's Mach-O linker *accepts and
+  ignores* `-exported_symbols_list` (828 exports remain) and rejects
+  `-unexported_symbols_list` and `-hidden-l`; Apple's ld honours
+  `-hidden-lflang_rt.runtime` but only via `-l`, which hits the dylib trap.
+  So on macOS the only reliable way is build-time: a runtime compiled with
+  `-fvisibility=hidden -fvisibility-inlines-hidden`. flang-rt has no option
+  for it (its `AddFlangRT.cmake` applies hidden visibility to CUDA offload
+  objects only; `RT_API_ATTRS` carries no visibility), so it is a
+  `CMAKE_CXX_FLAGS` decision in flang-rt-zig's build. Plan: flang-rt build
+  9 = static-only + hidden visibility on all six subdirs; consumers then
+  export nothing of the runtime without doing anything.
+
 ## 4. Recommendations, in order
 
 1. ~~flang-pixi: fix flang-rt-zig's macOS target (D4), add the tripwires, rebuild~~ — done, and extended to static libc++ everywhere (§3b).

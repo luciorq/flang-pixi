@@ -225,13 +225,22 @@ also records an absolute rpath to the env's `lib`), so a package built that
 way loads only where the toolchain is installed. r-zig-pixi's Makeconf now
 writes `FLIBS = <dir>/libflang_rt.runtime.a -lm` (found 2026-09-30 when
 quadprog and minqa failed to load from a relocated tree). A static-only
-layout is proposed on this side (docs/10 2026-10-01); the archive-path rule
-works before and after.
+layout is now the plan on this side (docs/16 §3d): the dylib in the search
+path also breaks any *flang-driver* link of the archive through Apple's
+`ld` (zig-built dylibs export `___dso_handle`; the driver adds
+`-lflang_rt.runtime` itself; result `ld: fixup error … '___dso_handle'`).
+Until flang-rt build 9 ships, a driver link on macOS must either keep the
+dylib off `-L` or use `-fuse-ld=lld`; zig-driven links are unaffected. The
+archive-path rule works before and after. Build 9 will also compile the
+runtime with hidden visibility, so a package `.so` stops re-exporting its
+~1,100 runtime symbols; on Linux a version script already achieves that,
+on macOS nothing at link time does (zig ignores `-exported_symbols_list`).
 
 **10. macOS: set the Fortran floor at compile time, and keep the SDK.**
 flang stamps objects with the host SDK's version unless told otherwise;
-`-mmacos-version-min=<floor>` in `FFLAGS`/`FCFLAGS` fixes it (the flag beats
-`MACOSX_DEPLOYMENT_TARGET`; the last flag wins). zig's linker then does not
+`-mmacosx-version-min=<floor>` (or `-mmacos-version-min`) in `FFLAGS`/`FCFLAGS`
+fixes it (the flag beats `MACOSX_DEPLOYMENT_TARGET`; the last flag wins;
+r-zig-pixi puts it in Makeconf's `FC` so user `FFLAGS` cannot drop it). zig's linker then does not
 relabel newer objects silently into a lower floor. flang's macOS link needs
 Apple's `ld` and the SDK (`SDKROOT`; `-fuse-ld=lld` still needs
 `libSystem.tbd`): the Xcode Command Line Tools are a requirement of any

@@ -34,7 +34,8 @@ if [[ "${target_platform}" != win-* ]]; then
   rm -rf "${SRC_DIR}/zig-libdir-mirror"; mkdir -p "${ZIG_LIB_DIR}"
   for _e in "${_zig_lib_src}"/* "${_zig_lib_src}"/.[!.]*; do [[ -e "${_e}" ]] && ln -s "${_e}" "${ZIG_LIB_DIR}/"; done
   export ZIG_LIB_DIR
-  if [[ -e "${ZIG_LIB_DIR}/../../lib/libc++.1.dylib" || -e "${ZIG_LIB_DIR}/../../lib/libc++.so.1" ]]; then
+  # (0.17 feedstock track also probes ../../lib/zig-llvm/lib first — docs/17)
+  if [[ -e "${ZIG_LIB_DIR}/../../lib/libc++.1.dylib" || -e "${ZIG_LIB_DIR}/../../lib/libc++.so.1" || -d "${ZIG_LIB_DIR}/../../lib/zig-llvm/lib" ]]; then
     echo "ERROR: ZIG_LIB_DIR mirror still has a libc++ sibling — the static-libc++ trick would not work" >&2; exit 1
   fi
   echo "ZIG_LIB_DIR=${ZIG_LIB_DIR} (static-libc++ mirror of ${_zig_lib_src})"
@@ -143,7 +144,8 @@ else
   fi
   # macOS floor (docs/16 D4, found 2026-09-30): the conda zig wrapper turns
   # `--target=arm64-apple-darwin20.0.0` into a version-less zig triple, so
-  # zig's default (13.0) wins over MACOSX_DEPLOYMENT_TARGET and every object
+  # zig's default (13.0 on 0.16, 15.0 on 0.17 — docs/17) wins over
+  # MACOSX_DEPLOYMENT_TARGET and every object
   # of libflang_rt.runtime.a came out `minos 13.0` against a declared 11.0.
   # Only the zig-form triple (`aarch64-macos.11.0-none`) keeps the version,
   # but compiler-rt needs the conda triple in CMAKE_*_COMPILER_TARGET. So:

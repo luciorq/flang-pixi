@@ -76,6 +76,27 @@ ABI probe / CRAN-flang parity checks.
 
 ---
 
+## 2026-10-02 — zig 0.17.0 tagged: impact assessed (docs/17), nothing changed yet
+
+**Ran:** a six-reader workflow over the 0.16.0→0.17.0 source diff and the
+feedstock's `dev` branch, two refuters per impact (cut short by usage
+credits after the flang-pixi items and r-zig RZ-01…06), plus probes of the
+conda-forge `zig_dev` 0.17 snapshot on gamma (linux + cross-Windows) and
+omicron. **Verdict: look now, change nothing** — no main-label 0.17 exists
+(snapshots only, version string identical). Facts: LLVM/clang/lld 22, libc++
+22.1.8, mingw-w64 15 (+`-D__CRT__NO_INLINE`), glibc abilists 2.44, macOS
+default floor 15.0 (shim matters more), shared-libc++ patch still on the
+feedstock track and the ZIG_LIB_DIR mirror still beats it (measured), the
+2.17 target form unchanged (measured), aarch64 `wcstold` and
+`__C_specific_handler` fixed on the dev track (measured → two shims retire in
+the 0.17 wave), native win-arm64 zig exists on the dev track, `zig cc` still
+links COFF with lld-link. r-zig-pixi: build.zig breaks on 0.17
+(`install_prefix` and `pathFromRoot` removed) and must poison or declare its
+configure inputs (cached configurer).
+
+**Changed:** docs/17 (new), docs/README index, this entry; next: the
+mirror sanity-check hardening and the "13.0" comment fixes (docs/17 §6.1).
+
 ## 2026-10-01 (later) — consumer follow-up: `native.<min>` verified, `___dso_handle` trap, runtime symbol re-export; static-only + hidden flang-rt is now the plan
 
 **Context:** r-zig-pixi closed its macOS deployment-target investigation

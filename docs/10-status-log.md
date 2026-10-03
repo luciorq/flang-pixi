@@ -76,6 +76,21 @@ ABI probe / CRAN-flang parity checks.
 
 ---
 
+## 2026-10-03 — zig 0.17.0 released on ziglang.org; docs/17 cross-checked, verdict unchanged
+
+**Ran:** read the release notes; probed the official `x86_64-linux` tarball
+(2.17 target → GLIBC_2.2.5; static libc++; aarch64 `wcstold` and
+`__C_specific_handler` fixed upstream, not just on conda-forge's track;
+lld-link still the COFF linker; `ZIG_LIB_DIR` in `zig env`); checked that
+`zig cc -O2` still vectorizes loops (the notes' disabled loop-vectorization
+workaround is the Zig compiler's own pipeline). Notes confirm LLVM 22.1.8,
+glibc 2.44, Darwin 15.0+ as the std floor (hence the 15.0 default), the
+configurer/maker split with `poisonCache`/`dependOn*` as the remedy
+r-zig-pixi needs. **Still waiting for conda-forge's main-label package**
+before any pin change (docs/17 §7).
+
+**Changed:** docs/17 §7, this entry.
+
 ## 2026-10-02 — zig 0.17.0 tagged: impact assessed (docs/17), nothing changed yet
 
 **Ran:** a six-reader workflow over the 0.16.0→0.17.0 source diff and the

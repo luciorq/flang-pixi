@@ -8,22 +8,39 @@ it is a build-time-only input needed to rebuild flang itself, not to use it.
 
 ## Status: 23.1.1 consumer set PUBLISHED to `universe` (2026-09-18), all six subdirs
 
-What is on the channel (verify with r-zig-pixi's `scripts/prefix-list-packages.sh universe <subdir>`
-or the GraphQL `packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query):
+What is on the channel — **one line per package, one build number per
+release** (the docs/13 rule from 2026-10-06; this generation predates it, so
+its "release build" column is empty and the per-subdir numbers are the
+declared legacy spread in `scripts/build-alignment.json`). Verify with
+`python3 scripts/check-build-alignment.py` (and the GraphQL
+`packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query or
+r-zig-pixi's `scripts/prefix-list-packages.sh universe <subdir>`):
 
-```
-linux-64:      lld-zig-23.1.1-zig_db819e7_1  flang-zig-23.1.1-zig_16e4e22_2  flang-rt-zig-23.1.1-zig_501841f_9  (flang-rt 9 = static-only, hidden; 2026-10-01)
-linux-aarch64: lld-zig-23.1.1-zig_852aba2_0  flang-zig-23.1.1-zig_8408465_1  flang-rt-zig-23.1.1-zig_852aba2_9
-osx-arm64:     lld-zig-23.1.1-zig_a177b76_4  flang-zig-23.1.1-zig_e52f94e_5  flang-rt-zig-23.1.1-zig_eb63498_9  (static libc++, floor 11.0; flang-rt 9 static-only, hidden)
-osx-64:        lld-zig-23.1.1-zig_5732dad_4  flang-zig-23.1.1-zig_705a114_5  flang-rt-zig-23.1.1-zig_79df4ff_9  (static libc++, floor 11.0; flang-rt 9 static-only, hidden)
-win-64:        lld-zig-23.1.1-zig_21cbb96_0  flang-zig-23.1.1-zig_0ff6bf8_1  flang-rt-zig-23.1.1-zig_03d85fb_4
-win-arm64:     lld-zig-23.1.1-zig_279c4b1_3  flang-zig-23.1.1-zig_52d3e10_4  flang-rt-zig-23.1.1-zig_1e4a608_7
+| package 23.1.1 | release build (all six) | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
+|---|---|---|---|---|---|---|---|
+| lld-zig | — (pre-rule) | `zig_db819e7_1` | `zig_852aba2_0` | `zig_a177b76_4` | `zig_5732dad_4` | `zig_21cbb96_0` | `zig_279c4b1_3` |
+| flang-zig | — (pre-rule) | `zig_16e4e22_2` | `zig_8408465_1` | `zig_e52f94e_5` | `zig_705a114_5` | `zig_0ff6bf8_1` | `zig_52d3e10_4` |
+| flang-rt-zig | — (pre-rule) | `zig_501841f_9` | `zig_852aba2_9` | `zig_eb63498_9` | `zig_79df4ff_9` | `zig_03d85fb_4` | `zig_1e4a608_7` |
 
-Exactly these 18 files, nothing else (superseded flang-rt `_4`/`_5`/`_8` pruned 2026-10-01 after build 9): every superseded or
-broken build was deleted with `scripts/prune-universe.py --apply` (keeps the
-newest build per subdir of the three consumer packages; dry run without
-`--apply`). The current key has the delete scope.
-```
+Hotfix notes for this generation (the reason each subdir differs; docs/13
+has the mechanism): macOS lld `_4` / flang `_5` and flang-rt `_8` = static
+libc++ + floor 11.0 (2026-09-30); flang-rt `_9` on the four unix subdirs =
+static-only, hidden runtime (2026-10-01); win-arm64 lld `_3` / flang `_4` /
+flang-rt `_7` = `libcompat_arm64.a` (2026-09-19); flang-rt `_5` on
+linux-aarch64/osx-64 = cross-build finclude fix. Windows flang-rt was always
+static-only and keeps `_4` / `_7`.
+
+**Next release (zig 0.17 wave): lld-zig `_5`, flang-zig `_6`, flang-rt-zig
+`_10` on all six subdirs** (llvm-zig `_4`, build-only). After it, this table
+has one build string per cell at the same number, the legacy map in
+`build-alignment.json` is deleted, and every later per-subdir rebuild is a
+declared hotfix (JSON `hotfixes` + a note here).
+
+Exactly 18 files, nothing else (superseded flang-rt `_4`/`_5`/`_8` pruned
+2026-10-01 after build 9): every superseded or broken build was deleted with
+`scripts/prune-universe.py --apply` (keeps the newest build per subdir of
+the three consumer packages; dry run without `--apply`). The current key
+has the delete scope.
 
 Lessons from the first publish: `rattler-build upload prefix` prints nothing
 on success without `-v`; the channel's `repodata.json` re-indexes

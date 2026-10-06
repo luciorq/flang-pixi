@@ -210,12 +210,22 @@ code uses). `SHLIB_OPENMP_FFLAGS=-fopenmp` therefore works for CRAN
 packages on all six subdirs (proven by `ci-omp.sh` on the native
 runners); R core's own configure still leaves the Fortran OpenMP flags
 empty, which is fine — R core has no Fortran OpenMP.
+*Under review, not changed (2026-10-06):* docs/18 §5 assesses a
+channel-owned `llvm-openmp-zig` drop-in (same names, soname, exports,
+mutual exclusion with conda-forge's, switched together with r-zig-pixi in
+the zig 0.17 wave) and lists what must be checked first; conda-forge's
+libomp is libc-only on Linux/macOS and MSVC-built on Windows.
 
 **8. Build numbers per subdir are not uniform.**
 Pin by version (`flang-zig ==23.1.1`), never by build string: the win-arm64
 consumer set is at lld `_3` / flang `_4` / flang-rt `_7`, linux-aarch64 and
 osx-64 flang-rt at `_5`, the rest lower — each bump fixed one subdir only
 (docs/14 has the live list and the dead files still awaiting deletion).
+*From the next release on (docs/13 rule, 2026-10-06):* every package is
+rebuilt on all six subdirs at **one build number** (zig 0.17 wave: lld-zig
+5, flang-zig 6, flang-rt-zig 10), so a consumer lock can pin a single
+`build-number` on every platform; per-subdir rebuilds between releases are
+declared hotfixes.
 
 **9. Link the runtime archive by path, not `-lflang_rt.runtime`.**
 The resource dir holds `libflang_rt.runtime.a` *and* a shared library on

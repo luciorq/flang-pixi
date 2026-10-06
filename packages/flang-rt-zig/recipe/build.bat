@@ -272,3 +272,12 @@ REM foreign-arch binary whose failed invocations (tolerated per-file via
 REM 2>nul) otherwise leave a poisoned exit code that fails the whole
 REM script AFTER a successful build.
 ver >nul
+
+REM --- tripwire (docs/18 section 6.6): this package ships no PE image at all.
+REM The import allowlist scan is skipped on purpose: the HOST env carries
+REM conda-forge llvm-openmp (MSVC-built libomp.dll imports VCRUNTIME140), which
+REM would trip a scan of %LIBRARY_BIN% although we ship only archives from it.
+REM Assert instead that no runtime DLL/EXE of ours exists anywhere.
+dir /s /b "%LIBRARY_PREFIX%\*flang_rt*.dll" "%LIBRARY_PREFIX%\*flang_rt*.exe" >nul 2>nul && ( echo ERROR: a shared flang runtime image was installed; FLANG_RT_ENABLE_SHARED must stay OFF & exit /b 1 )
+ver >nul
+echo load-dep allowlist: n/a for flang-rt-zig (archives only; docs/18 section 6.6)

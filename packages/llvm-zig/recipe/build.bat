@@ -271,3 +271,12 @@ REM foreign-arch binary whose failed invocations (tolerated per-file via
 REM 2>nul) otherwise leave a poisoned exit code that fails the whole
 REM script AFTER a successful build.
 ver >nul
+
+REM --- tripwire (docs/18 section 6.6): load-time imports = OS DLLs + UCRT api-sets only
+REM Positive allowlist (KERNEL32/ntdll/ADVAPI32/SHELL32/ole32/VERSION + api-ms-win-crt-*);
+REM a VCRUNTIME140/MSVCP140/libc++/libwinpthread/libomp import fails the build here,
+REM not at a consumer. Cross: the native llvm-objdump from BUILD_PREFIX, like strip.
+set "OBJDUMP_BIN=%LIBRARY_BIN%\llvm-objdump.exe"
+if "%target_platform%"=="win-arm64" set "OBJDUMP_BIN=%BUILD_PREFIX%\Library\bin\llvm-objdump.exe"
+powershell -ExecutionPolicy Bypass -File "%RECIPE_DIR%\check-imports.ps1" -ObjDump "%OBJDUMP_BIN%" -Dir "%LIBRARY_BIN%"
+if %ERRORLEVEL% neq 0 exit /b 1

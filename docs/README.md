@@ -30,8 +30,9 @@ current assessment of what is still needed and what can change.
 | 13 | [zig-feedstock coupling](13-zig-feedstock-coupling.md) | glibc 2.17 floor, ceiling tripwire, why feedstock rebuilds can break links |
 | 14 | [Publishing runbook](14-publishing-runbook.md) | Exact per-host upload commands for prefix.dev `universe` |
 | 15 | [Landscape review 2026-09](15-landscape-review-2026-09.md) | **What changed outside the project, what is still needed, what can change** |
-| 17 | [zig 0.17 impact 2026-10](17-zig-0.17-impact-2026-10.md) | Is it time? What the 0.17 tag and conda-forge's 0.17 track change for our surfaces; staged plan |
 | 16 | [zig-feedstock deviations 2026-09](16-zig-feedstock-deviations-2026-09.md) | What conda-forge's patched zig does differently (shared libc++ preference, baked targets, dropped flags) and what that costs hermeticity here and in R projects |
+| 17 | [zig 0.17 impact 2026-10](17-zig-0.17-impact-2026-10.md) | Is it time? What the 0.17 tag and conda-forge's 0.17 track change for our surfaces; staged plan |
+| 18 | [Static R channel vision](18-static-r-channel-vision.md) | **Long-term direction (2026-10-06):** static R packages on a libc-only contract; channel-owned libomp assessment; measured load-time deps of every published file; the allowlist tripwire; one build number per release |
 
 ## The thirty-second version
 

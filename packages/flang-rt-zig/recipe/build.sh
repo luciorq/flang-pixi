@@ -497,43 +497,53 @@ mkdir -p "${PREFIX}/share/flang-rt-zig"
   echo "zig_abi_target=${ZIG_LINUX_ABI_TARGET:-wrapper-default}"
 } > "${PREFIX}/share/flang-rt-zig/zig-toolchain.txt"
 
-# --- tripwires (docs/16): no shared C++ runtime shipped; macOS floor kept ----
-# Fail here, not at a consumer's load: (1) nothing under $PREFIX may depend on
-# a shared libc++/libstdc++ (the zig-feedstock shared-libc++ preference would
-# do exactly that if the ZIG_LIB_DIR mirror above stopped working); (2) on
+# --- tripwires (docs/18 §6.6, docs/16): load-time deps = libc only; macOS floor kept
+# Fail here, not at a consumer's load: (1) every ELF / Mach-O under $PREFIX
+# may depend on the C library and the loader ONLY — an allowlist, so a shared
+# libc++/libstdc++ (the zig-feedstock shared-libc++ preference, if the
+# ZIG_LIB_DIR mirror above stopped working), zlib, libxml2, libomp or anything
+# else fails the build (positive form of the contract since 2026-10-06;
+# measured clean on all 18 published files); (2) on
 # macOS every Mach-O, archive members included, must be built for at most
 # MACOSX_DEPLOYMENT_TARGET (flang-rt-zig shipped minos 13.0 against a declared
 # 11.0 floor until 2026-09-30 because the conda wrapper drops the version when
 # it translates a conda triple).
 _tw_fail() { echo "ERROR: $*" >&2; exit 1; }
 if [[ "${target_platform}" == linux-* ]]; then
+  # Allowlist (docs/18 §6.6): glibc's own libraries and the loader, nothing
+  # else. librt/libresolv/libutil are the pre-2.34 split libraries the 2.17
+  # target links; they are glibc too. Measured clean on all 18 published
+  # files (2026-10-06) before this became the rule.
+  _tw_allow_elf='^(libc|libm|libdl|libpthread|librt|libresolv|libutil)\.so\.[0-9]+$|^ld-linux[-a-z0-9_]*\.so\.[0-9]+$'
   _tw_od=""; for _c in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump" objdump; do command -v "${_c}" >/dev/null 2>&1 && { _tw_od="${_c}"; break; }; done
   if [[ -n "${_tw_od}" ]]; then
     _tw_n=0
     while IFS= read -r -d '' _f; do
-      _needed=$("${_tw_od}" -p "${_f}" 2>/dev/null | grep -E '^\s*NEEDED' | grep -E 'libc\+\+|libstdc\+\+|libunwind\.so' || true)
-      [[ -n "${_needed}" ]] && _tw_fail "${_f} depends on a shared C++ runtime (${_needed}) — libcxx in the build env? ZIG_LIB_DIR mirror ineffective? see docs/16"
+      _needed=$("${_tw_od}" -p "${_f}" 2>/dev/null | awk '/^ *NEEDED/{print $2}' | grep -v -E "${_tw_allow_elf}" || true)
+      [[ -n "${_needed}" ]] && _tw_fail "${_f} needs a library outside the libc allowlist: $(echo ${_needed} | tr '\n' ' ') — docs/18 §6.6 (a shared libc++/libstdc++ here means the ZIG_LIB_DIR mirror stopped working, docs/16)"
       _tw_n=$((_tw_n+1))
     done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.so*' \) -print0 2>/dev/null)
-    echo "C++ runtime tripwire OK: ${_tw_n} ELF files, no shared libc++/libstdc++ (docs/16)"
+    echo "load-dep allowlist OK: ${_tw_n} ELF files, glibc + loader only (docs/18 §6.6)"
   else
-    echo "WARNING: no objdump; skipping shared-C++-runtime tripwire" >&2
+    echo "WARNING: no objdump; skipping the load-dep allowlist tripwire" >&2
   fi
 elif [[ "${target_platform}" == osx-* ]]; then
   _tw_floor="${MACOSX_DEPLOYMENT_TARGET:-11.0}"; _tw_n=0
+  _tw_allow_macho='^/usr/lib/libSystem\.B\.dylib$'
   command -v otool >/dev/null 2>&1 || _tw_fail "otool not found; cannot run the Mach-O tripwire"
   while IFS= read -r -d '' _f; do
     file "${_f}" 2>/dev/null | grep -qE 'Mach-O|ar archive' || continue
-    if otool -L "${_f}" 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qE 'libc\+\+|libstdc\+\+'; then
-      _tw_fail "${_f} depends on a shared C++ runtime ($(otool -L "${_f}" | tail -n +2 | awk '{print $1}' | grep -E 'libc\+\+|libstdc\+\+' | tr '\n' ' ')) — ZIG_LIB_DIR mirror ineffective? see docs/16"
-    fi
+    # Allowlist (docs/18 §6.6): only libSystem may be loaded. LC_LOAD_* and
+    # LC_REEXPORT_DYLIB are counted; a dylib's own LC_ID_DYLIB is not.
+    _loads=$(otool -l "${_f}" 2>/dev/null | awk '/LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB/{c=1} c&&/ name /{print $2; c=0}' | grep -v -E "${_tw_allow_macho}" || true)
+    [[ -n "${_loads}" ]] && _tw_fail "${_f} loads a library outside the libc allowlist: $(echo ${_loads} | tr '\n' ' ') — docs/18 §6.6 (a shared libc++ here means the ZIG_LIB_DIR mirror stopped working, docs/16)"
     _minos=$(otool -l "${_f}" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; b=0}' | sort -uV | tail -1)
     if [[ -n "${_minos}" && "$(printf '%s\n' "${_minos}" "${_tw_floor}" | sort -V | tail -1)" != "${_tw_floor}" ]]; then
       _tw_fail "${_f} is built for macOS ${_minos} > declared floor ${_tw_floor} (docs/16 D4: pass a zig-form --target with the version)"
     fi
     _tw_n=$((_tw_n+1))
   done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.a' \) -print0 2>/dev/null)
-  echo "Mach-O tripwire OK: ${_tw_n} files, no shared libc++, minos <= ${_tw_floor} (docs/16)"
+  echo "load-dep allowlist OK: ${_tw_n} Mach-O files, libSystem only, minos <= ${_tw_floor} (docs/18 §6.6, docs/16)"
 fi
 
 # --- tripwires for build 9 (docs/16 §3d): static-only, hidden runtime ------

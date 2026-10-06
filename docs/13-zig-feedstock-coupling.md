@@ -164,3 +164,45 @@ cat $PREFIX/share/<pkg>/zig-toolchain.txt   # or share/llvm-zig/build-info.txt
 
 The upstream report asking the feedstock to document/stabilize the baseline
 is draft 5 in [12](12-upstream-reports.md).
+
+## Build numbers: why they differ per subdir today, and the rule from the next release on
+
+*(added 2026-10-06; until now this was implicit in the recipe.yaml comment
+blocks and docs/14)*
+
+**Why the `universe` channel carries different build numbers per subdir for
+the same package.** We rebuild only the subdirs a change affects, and every
+rebuild needs a bump: rattler-build hashes the *spec strings* of the
+requirements, not the resolved build dependencies, so a rebuild against a
+changed llvm-zig or a changed zig yields the **same filename** and the
+upload collides ("already exists", skipped). Full chains cost 1–3.5 h per
+subdir and prefix.dev storage was tight (universe was pruned to exactly 18
+files), so untouched subdirs kept their numbers: flang-rt 5 (linux-aarch64
+and osx-64 only — the cross-build finclude fix), 6/7 (win-arm64 only — the
+`__C_specific_handler` redirect), 8 (macOS only — static libc++), 9 (the
+four unix subdirs — static-only, hidden runtime). Current spread (23.1.1):
+
+| package | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
+|---|---|---|---|---|---|---|
+| lld-zig | `_1` | `_0` | `_4` | `_4` | `_0` | `_3` |
+| flang-zig | `_2` | `_1` | `_5` | `_5` | `_1` | `_4` |
+| flang-rt-zig | `_9` | `_9` | `_9` | `_9` | `_4` | `_7` |
+
+It is *safe*: the solver resolves each subdir independently and consumers
+pin by version (docs/11 item 8). It is also confusing: a reader cannot tell
+from a build number which fix a file carries, and the single `number:` in
+each recipe.yaml exceeds what some subdirs carry.
+
+**Rule, from the next release on.** Every published package is rebuilt on
+**all six subdirs at one build number per package**, so a release is
+identifiable by its build number alone. Partial per-subdir rebuilds are
+allowed only as **hotfixes between releases** and must be declared in
+docs/14 *and* in `scripts/build-alignment.json` (`hotfixes`). The zig 0.17
+wave is the first such release; its numbers are fixed now (adjust if a
+hotfix lands first): **lld-zig 5, flang-zig 6, flang-rt-zig 10, llvm-zig 4**
+(build-only, never published) — written into each recipe.yaml's comment
+block. `scripts/check-build-alignment.py` (reads universe, or
+`--channel-dir`) fails when a package's build number differs across subdirs
+outside the declared release/hotfix state; until the first aligned release
+it checks the spread above against the `legacy` map in the JSON. Run it
+after every upload, next to `prune-universe.py`.

@@ -70,6 +70,14 @@ build:
   # 9: static-only runtime (no .so/.dylib anywhere) built with hidden
   #    visibility — docs/16 §3d, docs/10 2026-10-01. Unix subdirs only;
   #    Windows was already static-only and keeps its build.
+  # NEXT: 10 — the zig 0.17 wave is the first release under the
+  #    one-build-number-per-release rule (docs/13, 2026-10-06): every
+  #    published package is rebuilt on ALL SIX subdirs at ONE number
+  #    (lld-zig 5 / flang-zig 6 / flang-rt-zig 10 / llvm-zig 4 (build-only)), so a release is
+  #    identifiable by its build number alone. Partial per-subdir rebuilds
+  #    between releases are hotfixes and must be declared in docs/14 and
+  #    scripts/build-alignment.json. Adjust the number if a hotfix lands
+  #    first. Why the numbers differ per subdir today: docs/13.
   number: 9
   string: zig_${{ hash }}_${{ build_number }}
   script:

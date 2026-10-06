@@ -42,39 +42,101 @@ ABI probe / CRAN-flang parity checks.
 
 ## Next actions, in order
 
-*(rewritten 2026-09-17 after the landscape review in
-[15-landscape-review-2026-09.md](15-landscape-review-2026-09.md))*
+*(rewritten 2026-10-06; the restart map is `RESTART_PROMPT.md`)*
 
-1. **Finish the 23.1.1 chains** (linux-64 on gamma, osx-arm64 then osx-64
-   on omicron, win-64 then win-arm64 cross on kappa, linux-aarch64 native
-   on GHA), smoke each, then **publish the 23.1.1 consumer set** per
-   [14](14-publishing-runbook.md) (file lists there are 22.1.8 — regenerate).
-   22.1.8 is never published (decision 2026-09-17). Then delete the 22.x
-   packages from the local channels.
-2. **r-zig-pixi Phase 2 (Fortran convergence on flang-zig)** — now
-   tracked on the consumer side in r-zig-pixi's
-   `.github/devdocs/consolidation/PHASE2_FORTRAN.md`: the compiler is a
-   per-target *dependency* decision (build.zig probes for `flang`, `findFlangRt`
-   globs the resource dir, `flang_rt.runtime` linked statically + libc++).
-   osx-arm64 DONE 2026-09-19 (build, lapack.R and the contract suite, all
-   at -O2); next osx-64 → linux-aarch64 → win-64 → win-arm64. This
-   project's part is the contract in [11](11-r-zig-integration.md)
-   (items 5–8 added 2026-09-19 for the Windows and win-arm64 legs).
-3. **osx-arm64 parity vs CRAN's experimental flang 23** (mac.r-project.org
-   `/opt/R/flang-23`): same tests, both compilers, diff.
-4. ~~Hardware validation of linux-aarch64 and win-arm64~~ — done via
-   `test.yml` on `ubuntu-24.04-arm` / `windows-11-arm` (2026-09-18/19);
-   remaining there: r-zig `lapack.R` + contract suite on those two.
-5. **First GHA run**: add `PREFIX_API_KEY` secret, push, dispatch with
-   defaults (census + linux-aarch64), read the census numbers, then try
-   `targets: linux-64` once to measure stage 1 on a 4-core runner (docs/08).
-6. One informational run: gfortran 16.2 at -O2 on omicron `lapack.R`.
-7. ~~Upstream r-zig-pixi's verify-bundle glibc-ceiling check.~~ Done — on r-zig-pixi `main` via PR #6 (2026-09-19), two-tier (runtime 2.17 hard / bin/toolchain helpers ≤ conda-forge's 2.28 baseline).
-8. Optional/deferred: publish llvm-zig (size decision); the five drafts
-   in [12](12-upstream-reports.md) stay unfiled unless the user changes
-   that decision.
+1. **zig 0.17 wave** — only when a 0.17.0 `zig_impl_*` is resolvable from
+   `conda-forge` without a label (the `dev` branch publishes snapshots under
+   `conda-forge/label/zig_dev`; checked again 2026-10-06: main label has
+   0.16.0 build 20 only). Then: bump the four `variants.yaml` pins **and
+   the four `number:` fields to lld 5 / flang 6 / flang-rt 10 / llvm 4** in
+   one change (first release under the one-number-per-release rule,
+   docs/13), hand-declare `__glibc >=2.17` / `__osx >=11.0` in `run:`
+   (docs/18 §6.3), rebuild linux-64 first and read the tripwires (glibc
+   ceiling, **load-dep allowlist**), then the other five, `test.yml`,
+   `check-build-alignment.py` with `release` set, drop the aarch64 shims
+   (`wcstold_compat.c`, `csh_arm64.def`/`-lcompat_arm64`) once win-arm64 is
+   green, consider a native win-arm64 lane. docs/17, docs/18 §6.
+2. **libomp decision** (docs/18 §5): answer the eight checks (symbol-version
+   parity, no C++ surface, Windows import libs, file-list parity, the
+   `_openmp_mutex` convention, r-zig-pixi's macOS openblas builds, build
+   mechanics, wave coupling); the user decides. Until then decision 4
+   stands: conda-forge `llvm-openmp`, no libomp build.
+3. **r-zig-pixi** (user's track): re-lock to flang-rt ≥ 9; optionally move
+   linux-64 from conda-forge's flang to flang-zig so all six subdirs share
+   the static hidden runtime and `omp_lib`; prepare build.zig for 0.17
+   (docs/17 §4); the vision's asks in handoff §7. We own only handoff §6–§7
+   there.
+4. **osx-arm64 parity vs CRAN's experimental flang 23** (never done).
+5. **First GHA `build.yml` run** (census) — still unrun.
+6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
+   unfiled by decision.
 
----
+## 2026-10-06 — vision recorded (docs/18); libomp and dependency trims re-examined with real data; one-build-number-per-release rule; allowlist tripwire patched; lock refreshed
+
+**Context (user):** record the long-term goal — a conda channel of portable
+R + statically linked R packages on a libc-only run-time contract (CRAN's
+macOS/Windows model on Linux too, zig + flang-pixi as the toolchain) — and
+revisit two decisions in its light without acting on them.
+
+**Ran:**
+- Fetched the 12 macOS/Windows consumer files from universe and used the 6
+  Linux ones in `./channel` (same names), extracted all 18, dumped every
+  load-time dependency (`readelf -d`, `llvm-objdump --macho`,
+  `pe-resolve-imports.py`); on kappa installed the published win-64 set
+  from universe with `pixi exec` and resolved every import per symbol:
+  **all 12 executables resolve**. Result (docs/18 §6.1): Linux = glibc's
+  eight 2.17-era libraries + loader; macOS = `libSystem.B` only, `minos
+  11.0`; Windows = `KERNEL32 ntdll ADVAPI32 SHELL32 ole32 (VERSION)` +
+  12 `api-ms-win-crt-*` api-sets; flang-rt ships no shared object anywhere.
+  **Finding:** the three linux-aarch64 packages declare no `__glibc` floor
+  (cross build lost the run export; `check-stdlib-floor.py` only rejects a
+  floor that is too high).
+- llvm-zig's `LLVMConfig.cmake` (from the linux-64 package; rb-stage wipes
+  the CMake cache): ZLIB 0, ZSTD OFF, LIBXML2 OFF, LIBEDIT 0, FFI OFF,
+  HTTPLIB OFF; TERMINFO is gone from LLVM ≥ 19. Nothing to trim.
+- conda-forge `llvm-openmp 23.1.2` on all six subdirs (docs/18 §5.1):
+  libc-only on Linux (GLIBC 2.17, SONAME `libomp.so`, OMP_*/GOMP_* version
+  nodes, 1,385/1,173 exports) and macOS (`@rpath/libomp.dylib`, libSystem,
+  11.0, 1,648/1,767); MSVC-built on Windows (`VCRUNTIME140`, `PSAPI`,
+  depends `vc14_runtime` + `ucrt`; 788/676 exports; `libiomp5md` alias).
+  r-zig-pixi's lock (read-only): `llvm-openmp` is pulled by flang-rt-zig,
+  its own `23.*` pin, and on macOS by the `openmp_*` openblas builds +
+  `_openmp_mutex *_kmp_llvm` (by name); Linux/win-64 envs also carry
+  `libgomp` via `libgcc`. Eight checks listed before a drop-in decision.
+  **Decision 4 unchanged.**
+- `stdlib('c')` and `compiler('zig')` evaluated (docs/18 §6.3–§6.4):
+  hand-declared virtual floors recommended for the 0.17 wave (fixes the
+  aarch64 gap; sysroot changes nothing per docs/16 D6); keep
+  `compiler('zig')` (no measured binary difference; the wrapper's
+  `-mcpu=baseline` is wanted). `python` is build-only.
+- Wrote the allowlist tripwire (docs/18 §6.6): four `build.sh` (Linux
+  NEEDED ⊆ glibc + loader; macOS LC_LOAD_* ⊆ libSystem), four `build.bat`
+  + `check-imports.ps1` (OS DLLs + UCRT api-sets via `llvm-objdump
+  --private-headers`; flang-rt asserts no PE image instead). Verified the
+  predicates with `scripts/check-load-deps.sh` over the 18 extracted
+  packages (52 images, 0 violations) and a negative control (conda-forge
+  win libomp fails on `VCRUNTIME140`). **No rebuild** — effective with the
+  0.17 wave.
+- Build numbers: documented the per-subdir spread and its cause in docs/13
+  (spec-string hash → rebuilds collide without a bump; partial rebuilds to
+  save 1–3.5 h/subdir and storage), the new rule (one number per package per
+  release; hotfixes declared), next numbers lld 5 / flang 6 / flang-rt 10 /
+  llvm 4 in the recipe comments, docs/14 in one-number-per-package format,
+  `scripts/check-build-alignment.py` + `build-alignment.json` (universe
+  today: "build alignment OK" against the declared legacy spread).
+- `pixi update` (all environments): rattler-build **unchanged at 0.76.1**
+  (so no dry stage needed), python 3.14.6 → 3.14.8 (+ `libpython`), cmake
+  4.4.2 → 4.4.4, zig_impl/zig_* 0.16.0 build 9 → **20** in `zig-probe`,
+  libcxx 22.1.8 → 23.1.2 in the macOS default env, patchelf 0.17 → 0.19,
+  libgcc/libstdcxx 16.1 → 16.2. **No `zig_impl_*` 0.17.0 on the main label**
+  (0.16.0 build 20, 2026-10-03, is the newest; 0.17.0 exists only under
+  `label/zig_dev`) — the 0.17 wave stays blocked.
+
+**Changed:** docs/18 (new), docs/13, docs/14, docs/11 (items 7–8), README
+index, RESTART_PROMPT.md, this entry; `packages/*/recipe/build.sh`,
+`build.bat`, `check-imports.ps1` (new ×4), `recipe.yaml` (comments only);
+`scripts/check-build-alignment.py`, `build-alignment.json`,
+`check-load-deps.sh` (new); `pixi.lock`; r-zig-pixi handoff §7.
 
 ## 2026-10-03 — zig 0.17.0 released on ziglang.org; docs/17 cross-checked, verdict unchanged
 

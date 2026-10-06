@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: defender exclusions (windows)
         if: runner.os == 'Windows'
@@ -81,7 +81,7 @@ jobs:
           Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE\.pixi","$env:USERPROFILE\.cache"
           Add-MpPreference -ExclusionProcess "zig.exe","clang.exe","flang.exe","flang-23.exe","lld-link.exe","ld.lld.exe","pixi.exe"
 
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           run-install: false
 
@@ -139,7 +139,7 @@ jobs:
     if: ${{ inputs.promote && startsWith(inputs.source, 'release:') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           run-install: false
       - name: download all assets

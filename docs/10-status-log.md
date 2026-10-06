@@ -136,7 +136,20 @@ revisit two decisions in its light without acting on them.
 index, RESTART_PROMPT.md, this entry; `packages/*/recipe/build.sh`,
 `build.bat`, `check-imports.ps1` (new ×4), `recipe.yaml` (comments only);
 `scripts/check-build-alignment.py`, `build-alignment.json`,
-`check-load-deps.sh` (new); `pixi.lock`; r-zig-pixi handoff §7.
+`check-load-deps.sh` (new); `pixi.lock`; r-zig-pixi handoff §7. Later the
+same day: GitHub Actions bumped to current releases (checkout v4→v7,
+upload-artifact v4→v7, download-artifact v4→v8, setup-pixi v0.10.2→v0.11.0)
+in `build.yml`, `test.yml`, `actions/stage/action.yml`; release notes read —
+no input we use changed (downloads by name, no `auth-*`, no
+`pull_request_target`); actionlint clean; proof is the next `test.yml` run
+after the push.
+**Runner images: keep as they are (user, 2026-10-06)** — explicit pins
+(`ubuntu-24.04[-arm]`, `macos-15[-intel]`, `windows-2025`, `windows-11-arm`),
+never `-latest` (`ubuntu-latest` → 26.04 in Nov 2026, `macos-latest` is
+already 26); the oldest GA image is the better floor test, omicron covers
+macOS 26. Revisit on a `macos-15-intel` deprecation notice (→
+`macos-26-intel`), or add a `macos-26` row to `test.yml` if newest-SDK
+coverage is wanted.
 
 ## 2026-10-03 — zig 0.17.0 released on ziglang.org; docs/17 cross-checked, verdict unchanged
 

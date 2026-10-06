@@ -149,7 +149,9 @@ next actions), `docs/11-r-zig-integration.md` (items 7, 8 pointers),
 (index 18), `packages/*/recipe/build.sh` (allowlist tripwire), `packages/*/
 recipe/build.bat` (Windows tripwire), `packages/*/recipe/recipe.yaml`
 (NEXT build-number comments only; `number:` untouched), `pixi.lock`
-(`pixi update`, all environments). In r-zig-pixi: handoff `§7` appended
+(`pixi update`, all environments), `.github/workflows/{build,test}.yml` +
+`.github/actions/stage/action.yml` (actions bumped: checkout v7,
+upload-artifact v7, download-artifact v8, setup-pixi v0.11.0). In r-zig-pixi: handoff `§7` appended
 (their file, their push). Previous sessions' work is all pushed (tree was
 clean at c2c061f plus the 10-03 RESTART_PROMPT/docs/10 edits).
 

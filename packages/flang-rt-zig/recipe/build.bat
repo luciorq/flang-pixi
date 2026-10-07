@@ -44,6 +44,13 @@ REM docs/10-status-log.md for the full story and the Linux-side measurement.
 if not defined CXXFLAGS set "CXXFLAGS="
 set "CFLAGS=%CFLAGS% -g0"
 set "CXXFLAGS=%CXXFLAGS% -g0"
+REM Hidden visibility, build 10 (parity with the unix build 9 flags; docs/16
+REM 3d, docs/19 5). COFF has no ELF visibility: on MinGW the flag only
+REM excludes symbols from lld's auto-export, and a zig-linked Fortran DLL
+REM already exported none of the runtime (lld skips archive members), so
+REM this changes nothing measurable here -- one flag set on all six subdirs.
+set "CFLAGS=%CFLAGS% -fvisibility=hidden"
+set "CXXFLAGS=%CXXFLAGS% -fvisibility=hidden -fvisibility-inlines-hidden"
 
 set "FLANG_BIN=%BUILD_PREFIX%\Library\bin\flang.exe"
 if not exist "%FLANG_BIN%" (
@@ -165,6 +172,11 @@ for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
   for /d %%T in ("%%D\lib\*windows-gnu") do if exist "%%T\libflang_rt.runtime.static.a" (
     copy /y "%%T\libflang_rt.runtime.static.a" "%%T\libflang_rt.runtime.a" >nul
     echo runtime aliased in %%D
+    REM Build 10: keep ONLY the plain name. The .static/.dynamic/_dbg files are
+    REM the same static build under CMake's other names (docs/19 section 1:
+    REM .static.a is byte-identical, 4 x 14 MB of dead weight; nothing links them).
+    del /q "%%T\libflang_rt.runtime.static.a" "%%T\libflang_rt.runtime.static_dbg.a" "%%T\libflang_rt.runtime.dynamic.a" "%%T\libflang_rt.runtime.dynamic_dbg.a" 2>nul
+    echo duplicate runtime archives removed in %%T
   )
 )
 

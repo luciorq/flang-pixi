@@ -70,15 +70,21 @@ build:
   # 9: static-only runtime (no .so/.dylib anywhere) built with hidden
   #    visibility — docs/16 §3d, docs/10 2026-10-01. Unix subdirs only;
   #    Windows was already static-only and keeps its build.
-  # NEXT: 10 — the zig 0.17 wave is the first release under the
-  #    one-build-number-per-release rule (docs/13, 2026-10-06): every
-  #    published package is rebuilt on ALL SIX subdirs at ONE number
-  #    (lld-zig 5 / flang-zig 6 / flang-rt-zig 10 / llvm-zig 4 (build-only)), so a release is
-  #    identifiable by its build number alone. Partial per-subdir rebuilds
-  #    between releases are hotfixes and must be declared in docs/14 and
-  #    scripts/build-alignment.json. Adjust the number if a hotfix lands
-  #    first. Why the numbers differ per subdir today: docs/13.
-  number: 9
+  # 10: FIRST ALIGNED RELEASE (2026-10-06, docs/13 rule): all three
+  #    consumer packages rebuilt on ALL SIX subdirs at one number each
+  #    (lld-zig 5 / flang-zig 6 / flang-rt-zig 10; llvm-zig 4 build-only),
+  #    still zig 0.16.0 / LLVM 23.1.1 — r-zig-pixi's final 0.16 release
+  #    before any 0.17 work. Carries: load-dependency allowlist tripwires
+  #    (docs/18 §6.6), hand-declared __glibc/__osx floors in run (docs/18
+  #    §6.3; fixes the floor missing on the linux-aarch64 packages),
+  #    hidden-visibility CFLAGS/CXXFLAGS on Windows too (parity; docs/19
+  #    §5), `llvm-openmp >=23` in run on every subdir (docs/19 §7), and the
+  #    four duplicate Windows runtime archives dropped (docs/19 §1).
+  # NEXT: 11 — the zig 0.17 wave (or the upstream-zig switch, docs/19 §6):
+  #    again one number on all six subdirs (lld-zig 6 / flang-zig 7 /
+  #    flang-rt-zig 11 / llvm-zig 5); scripts/build-alignment.json
+  #    `next_release`. Hotfixes between releases: docs/14 + the JSON.
+  number: 10
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -131,7 +137,23 @@ requirements:
     # libomp — the same one zig cc / zig c++ code in r-zig-pixi links, so a
     # process never carries two OpenMP runtimes. We ship only the Fortran
     # module (omp_lib) and, on Windows, the link shims. docs/10 2026-09-18.
-    - llvm-openmp
+    # >= major (docs/19 §7, build 10): the shipped omp_lib.mod is generated
+    # from THIS LLVM's omp_lib.F90.var and declares 6.0-era entry points
+    # that older libomp builds do not export. No upper bound: a newer libomp
+    # runs code built against an older module. win-64 already carried this
+    # floor through the host dependency's run export; now explicit everywhere.
+    - llvm-openmp >=${{ major }}
+    # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06): the
+    # stdlib run export reached linux-64 but not the cross-built
+    # linux-aarch64 packages (they declared no __glibc at all), so the floor
+    # is written here explicitly on every subdir. Values = c_stdlib_version
+    # (variants.yaml): glibc 2.17, macOS 11.0. Nothing on Windows (UCRT).
+    - if: linux
+      then:
+        - __glibc >=${{ c_stdlib_version }},<3.0.a0
+    - if: osx
+      then:
+        - __osx >=${{ c_stdlib_version }}
   # flang-rt is pure link-time input (a static archive; no shared runtime
   # since build 9) — nothing
   # in it invokes llvm-zig tools at use time, and the lld-zig split's

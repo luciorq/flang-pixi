@@ -23,6 +23,9 @@ bp=(--build-platform "$host")
 if [[ "$target" == "$host" ]]; then test="${RB_TEST:-native}"; else test="${RB_TEST:-skip}"; fi
 RB_OUT_DEFAULT="$root/rb-out"; [[ -d /data/gamma/luciorq/workspaces ]] && RB_OUT_DEFAULT=/data/gamma/luciorq/workspaces/temp/rb-out
 out="${RB_OUT:-$RB_OUT_DEFAULT}"; mkdir -p "$out"
+# A failed stage leaves its work tree behind; clear it BEFORE building too
+# (2026-10-07: a failed attempt's 20 GB work dir filled kappa's disk).
+rm -rf "$out/bld"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) chan="file:///$(cygpath -m "$root")/channel";; *) chan="file://$root/channel";; esac
 echo "== rattler-build $pkg -> $target (build $host, test=$test, out=$out)"
 rattler-build build \

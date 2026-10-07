@@ -49,12 +49,21 @@ def main():
         fam = "linux" if subdir.startswith("linux") else "osx" if subdir.startswith("osx") else "win"
         floor = floors.get(fam)
         problems = []
+        seen_virtual = False
         for d in deps:
             m = re.match(r"^(__glibc|__osx|sysroot_[\w-]+)\s+>=\s*([\d.]+)", d)
             if not m or not floor:
                 continue
+            if m.group(1) in ("__glibc", "__osx"):
+                seen_virtual = True
             if vtuple(m.group(2)) > vtuple(floor):
                 problems.append(f"{d!r} exceeds recipe floor {floor}")
+        # A MISSING floor is a defect too (docs/18 §6.1: the cross-built
+        # linux-aarch64 packages shipped without any __glibc): linux and osx
+        # packages must carry the virtual floor explicitly (recipes do since
+        # the 2026-10-06 release).
+        if fam in ("linux", "osx") and floor and not seen_virtual:
+            problems.append(f"no {'__glibc' if fam == 'linux' else '__osx'} floor declared (expected >= {floor})")
         status = "OK" if not problems else "FAIL"
         print(f"stdlib floor {status}: {f.split('/')[-1]} [{subdir}] floor={floor} depends={deps}")
         for p in problems:

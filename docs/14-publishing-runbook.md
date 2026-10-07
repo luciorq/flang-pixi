@@ -6,35 +6,54 @@ channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: 23.1.1 consumer set PUBLISHED to `universe` (2026-09-18), all six subdirs
+## Status: first ALIGNED release built and checked on all six subdirs 2026-10-07 (lld-zig 5 / flang-zig 6 / flang-rt-zig 10), upload pending the user's go; universe still holds the pre-rule spread
 
-What is on the channel — **one line per package, one build number per
-release** (the docs/13 rule from 2026-10-06; this generation predates it, so
-its "release build" column is empty and the per-subdir numbers are the
-declared legacy spread in `scripts/build-alignment.json`). Verify with
-`python3 scripts/check-build-alignment.py` (and the GraphQL
-`packages(filters:{name:{eq:…}}){variants(includeHidden:true)}` query or
-r-zig-pixi's `scripts/prefix-list-packages.sh universe <subdir>`):
+One line per package, one build number per release (docs/13 rule). Verify
+after upload with `python3 scripts/check-build-alignment.py` (expects the
+`release` numbers in `scripts/build-alignment.json`, no legacy map).
 
 | package 23.1.1 | release build (all six) | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
 |---|---|---|---|---|---|---|---|
-| lld-zig | — (pre-rule) | `zig_db819e7_1` | `zig_852aba2_0` | `zig_a177b76_4` | `zig_5732dad_4` | `zig_21cbb96_0` | `zig_279c4b1_3` |
-| flang-zig | — (pre-rule) | `zig_16e4e22_2` | `zig_8408465_1` | `zig_e52f94e_5` | `zig_705a114_5` | `zig_0ff6bf8_1` | `zig_52d3e10_4` |
-| flang-rt-zig | — (pre-rule) | `zig_501841f_9` | `zig_852aba2_9` | `zig_eb63498_9` | `zig_79df4ff_9` | `zig_03d85fb_4` | `zig_1e4a608_7` |
+| lld-zig | **5** | `zig_495485e_5` | `zig_ea2e60d_5` | `zig_1c2e337_5` | `zig_42a4ac4_5` | `zig_21cbb96_5` | `zig_279c4b1_5` |
+| flang-zig | **6** | `zig_b4d422a_6` | `zig_22c055e_6` | `zig_3010818_6` | `zig_0257dba_6` | `zig_0ff6bf8_6` | `zig_52d3e10_6` |
+| flang-rt-zig | **10** | `zig_3054d59_10` | `zig_ea2e60d_10` | `zig_a7874a2_10` | `zig_e4a4366_10` | `zig_03d85fb_10` | `zig_1e4a608_10` |
 
-Hotfix notes for this generation (the reason each subdir differs; docs/13
-has the mechanism): macOS lld `_4` / flang `_5` and flang-rt `_8` = static
-libc++ + floor 11.0 (2026-09-30); flang-rt `_9` on the four unix subdirs =
-static-only, hidden runtime (2026-10-01); win-arm64 lld `_3` / flang `_4` /
-flang-rt `_7` = `libcompat_arm64.a` (2026-09-19); flang-rt `_5` on
-linux-aarch64/osx-64 = cross-build finclude fix. Windows flang-rt was always
-static-only and keeps `_4` / `_7`.
+Built with zig 0.16.0 (zig_impl build 20 on every host), LLVM 23.1.1;
+what changed versus the previous spread: docs/10 2026-10-07. Still on
+universe until the upload: the pre-rule spread lld `_1/_0/_4/_4/_0/_3`,
+flang `_2/_1/_5/_5/_1/_4`, flang-rt `_9/_9/_9/_9/_4/_7` (hotfix history in
+docs/13). `prune-universe.py --apply` after the upload removes it.
 
-**Next release (zig 0.17 wave): lld-zig `_5`, flang-zig `_6`, flang-rt-zig
-`_10` on all six subdirs** (llvm-zig `_4`, build-only). After it, this table
-has one build string per cell at the same number, the legacy map in
-`build-alignment.json` is deleted, and every later per-subdir rebuild is a
-declared hotfix (JSON `hotfixes` + a note here).
+**Next release: lld-zig `_6`, flang-zig `_7`, flang-rt-zig `_11`** (llvm-zig
+`_5`, build-only) — the zig 0.17 wave or the upstream-zig switch (docs/19
+§6). Hotfixes between releases: declare in `scripts/build-alignment.json`
+`hotfixes` and note here.
+
+### Upload commands for this release (run only on the user's go)
+
+Every host uploads its own subdirs from its channel directory with the
+stored key (`~/.rattler/credentials.json`); `--skip-existing` makes reruns
+idempotent; the channel re-indexes asynchronously (check with
+`check-build-alignment.py`, which reads the GraphQL variants, not repodata).
+
+```bash
+# gamma (/home/luciorq/projects/flang-pixi)
+rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/linux-64/lld-zig-23.1.1-zig_495485e_5.conda channel/linux-64/flang-zig-23.1.1-zig_b4d422a_6.conda channel/linux-64/flang-rt-zig-23.1.1-zig_3054d59_10.conda \
+  channel/linux-aarch64/lld-zig-23.1.1-zig_ea2e60d_5.conda channel/linux-aarch64/flang-zig-23.1.1-zig_22c055e_6.conda channel/linux-aarch64/flang-rt-zig-23.1.1-zig_ea2e60d_10.conda
+# omicron (/Users/luciorq/projects/flang-pixi, binary ~/.pixi/bin/rattler-build)
+rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/osx-arm64/lld-zig-23.1.1-zig_1c2e337_5.conda channel/osx-arm64/flang-zig-23.1.1-zig_3010818_6.conda channel/osx-arm64/flang-rt-zig-23.1.1-zig_a7874a2_10.conda \
+  channel/osx-64/lld-zig-23.1.1-zig_42a4ac4_5.conda channel/osx-64/flang-zig-23.1.1-zig_0257dba_6.conda channel/osx-64/flang-rt-zig-23.1.1-zig_e4a4366_10.conda
+# kappa (C:\Users\admin\projects\flang-pixi; rattler-build.exe via pixi)
+rattler-build -v upload prefix --channel universe --skip-existing ^
+  channel\win-64\lld-zig-23.1.1-zig_21cbb96_5.conda channel\win-64\flang-zig-23.1.1-zig_0ff6bf8_6.conda channel\win-64\flang-rt-zig-23.1.1-zig_03d85fb_10.conda ^
+  channel\win-arm64\lld-zig-23.1.1-zig_279c4b1_5.conda channel\win-arm64\flang-zig-23.1.1-zig_52d3e10_6.conda channel\win-arm64\flang-rt-zig-23.1.1-zig_1e4a608_10.conda
+# then, from gamma
+python3 scripts/prune-universe.py --apply && python3 scripts/check-build-alignment.py && gh workflow run test.yml
+```
+
+### Previous status (2026-09-18 → 2026-10-06): 23.1.1 pre-rule spread, 18 files
 
 Exactly 18 files, nothing else (superseded flang-rt `_4`/`_5`/`_8` pruned
 2026-10-01 after build 9): every superseded or broken build was deleted with

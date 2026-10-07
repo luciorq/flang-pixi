@@ -1,0 +1,8 @@
+# lld-zig-23.1.1-zig_db819e7_1  subdir=linux-64  build=zig_db819e7_1  depends=['__glibc >=2.17,<3.0.a0']  files=6  (from info/paths.json, generated 2026-10-06 for docs/19)
+L           3 bin/ld.lld
+L           3 bin/ld64.lld
+H    68111736 bin/lld
+L           3 bin/lld-link
+L           3 bin/wasm-ld
+H         135 share/lld-zig/zig-toolchain.txt
+# total 68111883 bytes

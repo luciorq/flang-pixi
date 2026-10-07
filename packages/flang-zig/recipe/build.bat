@@ -178,6 +178,10 @@ REM instead of KERNEL32, which arm64 Windows lacks (docs/10 2026-09-19). It
 REM matters whenever a build system puts -lkernel32 ahead of the CRT (CMake).
 powershell -Command "$x = '-fuse-ld=lld' + [char]10 + '-fintrinsic-modules-path <CFGDIR>/../lib/clang/%MAJOR_VER%/finclude/flang/%FINC_TRIPLE%' + [char]10; if ('%CFG_EXTRA%') { $x += '%CFG_EXTRA%' + [char]10 }; [IO.File]::WriteAllText('%LIBRARY_BIN%\flang.cfg', $x)"
 if not exist "%LIBRARY_BIN%\flang.cfg" ( echo ERROR: flang.cfg not written & exit /b 1 )
+REM Compile-only variant for use outside conda (docs/19; template in the
+REM recipe dir): the intrinsic-modules line alone. Not read by default.
+powershell -NoProfile -Command "(Get-Content -Raw '%RECIPE_DIR%\flang-compile.cfg.in').Replace('@MAJOR@','%MAJOR_VER%').Replace('@FINC_TRIPLE@','%FINC_TRIPLE%') | Set-Content -NoNewline -Encoding ascii '%LIBRARY_BIN%\flang-compile.cfg'"
+if not exist "%LIBRARY_BIN%\flang-compile.cfg" ( echo ERROR: flang-compile.cfg not written & exit /b 1 )
 
 REM Strip installed executables -- mirrors the unix build.sh strip pass.
 set "STRIP_BIN=%LIBRARY_BIN%\llvm-strip.exe"

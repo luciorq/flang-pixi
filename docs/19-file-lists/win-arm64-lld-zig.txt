@@ -1,0 +1,13 @@
+# lld-zig-23.1.1-zig_279c4b1_3  subdir=win-arm64  build=zig_279c4b1_3  depends=[]  files=11  (from info/paths.json, generated 2026-10-06 for docs/19)
+H    57180672 Library/bin/ld.lld.exe
+H    57180672 Library/bin/ld64.lld.exe
+H    57180672 Library/bin/lld-link.exe
+H    57180672 Library/bin/lld.exe
+H    57180672 Library/bin/wasm-ld.exe
+H     2954218 Library/lib/liblldCOFF.a
+H      357080 Library/lib/liblldCommon.a
+H     7682738 Library/lib/liblldELF.a
+H     3106884 Library/lib/liblldMachO.a
+H      101328 Library/lib/liblldMinGW.a
+H     1447316 Library/lib/liblldWasm.a
+# total 301552924 bytes

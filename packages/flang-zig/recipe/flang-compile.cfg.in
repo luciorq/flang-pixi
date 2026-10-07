@@ -1,0 +1,21 @@
+# flang-compile.cfg — the COMPILE-ONLY driver configuration (flang-pixi docs/19).
+#
+# Rendered by build.sh / build.bat into bin/flang-compile.cfg (Library/bin on
+# Windows) next to the full flang.cfg. Use it outside conda: copy a carved tree
+# (scripts/carve-fortran-standalone.py) and either rename this file to
+# flang.cfg or pass `--config flang-compile.cfg`. It contains exactly the one
+# line a compile needs on every platform: where the intrinsic modules live.
+# LLVM >= 23 installs them under lib/clang/<major>/finclude/flang/<triple>/ and
+# the driver only finds that directory by its OWN target-triple name, which
+# on macOS carries the host OS version (arm64-apple-macosx26.0.0) and can
+# never match a shipped directory. Measured 2026-10-06 (docs/19 §4): Linux and
+# Windows ship a directory named after the driver's default triple
+# (x86_64-conda-linux-gnu symlinked as x86_64-unknown-linux-gnu;
+# x86_64-w64-windows-gnu), so they compile with no cfg at all; macOS does not.
+# Nothing here is needed when the caller passes -fintrinsic-modules-path
+# itself (r-zig-pixi's zig-fc can).
+#
+# Deliberately absent, because they belong to the LINK step the standalone
+# user does with zig instead of the flang driver: --sysroot, -fuse-ld=lld,
+# --rtlib=compiler-rt, $-Wl,-L / -rpath / -rpath-link lines.
+-fintrinsic-modules-path <CFGDIR>/../lib/clang/@MAJOR@/finclude/flang/@FINC_TRIPLE@

@@ -20,6 +20,9 @@ if not "%TARGET%"=="%HOST%" (
 if "!TEST!"=="" set "TEST=native"
 if "%RB_OUT%"=="" set "RB_OUT=%ROOT%\rb-out"
 if not exist "%RB_OUT%" mkdir "%RB_OUT%"
+REM A failed stage leaves its work tree behind; clear it BEFORE building too
+REM (2026-10-07: 20 GB of a failed win-arm64 attempt filled kappa's disk).
+rmdir /s /q "%RB_OUT%\bld" 2>nul
 set "CHAN=file:///%ROOT:\=/%/channel"
 echo == rattler-build %PKG% -^> %TARGET% (build %HOST%, test=!TEST!, out=%RB_OUT%)
 rattler-build build --recipe "%ROOT%\packages\%PKG%\recipe\recipe.yaml" --variant-config "%ROOT%\packages\%PKG%\recipe\variants.yaml" --target-platform %TARGET% !BP! --test !TEST! -c "%CHAN%" -c conda-forge --output-dir "%RB_OUT%"

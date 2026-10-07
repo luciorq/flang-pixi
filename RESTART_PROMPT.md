@@ -1,10 +1,20 @@
-# RESTART_PROMPT — state of flang-pixi as of 2026-10-06 (read first in a new session)
+# RESTART_PROMPT — state of flang-pixi as of 2026-10-07 (read first in a new session)
 
 Authoritative detail lives in `docs/10-status-log.md` (newest entry first,
-2026-10-06 at the top) and the numbered docs; this file is the map.
+2026-10-07 at the top) and the numbered docs; this file is the map.
 
 ## Where things stand
 
+- **Release in flight (2026-10-07): the first ALIGNED release — lld-zig 5 /
+  flang-zig 6 / flang-rt-zig 10 on all six subdirs, zig 0.16.0 (zig_impl
+  build 20), LLVM 23.1.1 — is BUILT and post-checked on linux-64,
+  linux-aarch64, osx-arm64, osx-64, win-64 and win-arm64 (done 05:37 EDT;
+  kappa needed a disk cleanup and a re-run of the arm chain). Upload waits for the
+  user's go (commands in docs/14); then `prune-universe.py --apply`,
+  `check-build-alignment.py`, `test.yml`. Until then universe holds the
+  pre-rule spread below.** Build strings: docs/14 table; stage results and
+  the two allowlist corrections the release build forced (sibling
+  libraries; CRYPT32/WINHTTP): docs/10 2026-10-07.
 - **Published and native-tested on all six subdirs** (prefix.dev
   `universe`, exactly 18 live files, docs/14): LLVM **23.1.1** chains built
   with conda-forge zig **0.16.0** (builds 17–19; the feedstock is at build
@@ -58,6 +68,20 @@ tree → packages) are in docs/18 §2. flang-pixi's packages already meet the
 run-time contract; what follows for us is §5 (libomp) and §6.6 (allowlist
 tripwire) of docs/18, and handoff §7 for r-zig-pixi.
 
+## Standalone Fortran toolchain (r-zig-pixi proposal, measured 2026-10-06, docs/19)
+
+The minimal conda-free compile set = `flang-23` (+link) + the intrinsic/OpenMP
+`.mod` files + `libflang_rt.runtime.a` (+ a one-line cfg on macOS only): 24
+files on unix, 40 on Windows, 30.5–43.9 MB as zstd; compiles with nothing
+else on PATH and zig links it on all three platforms (no lld-zig, sysroot,
+SDK or CRT snapshot). The flang *driver* link needs lld + sysroot (Linux),
+`SDKROOT` (macOS), lld + the CRT snapshot (Windows). Recommendation: no
+second artifact; `scripts/carve-fortran-standalone.py` carves it from the
+published `.conda` (tested on all six subdirs). `flang-compile.cfg.in`
+ships as `bin/flang-compile.cfg` from flang-zig build 6. Upstream-zig
+switch = principle decision, estimated in docs/19 §6 (identical code, fewer
+NEEDED, no conda-forge wait). flang-rt 10: add `llvm-openmp >=23` on unix.
+
 ## Decisions in force, and why
 
 1. Never publish llvm-zig; never publish 22.x (prefix.dev storage).
@@ -105,14 +129,19 @@ tripwire) of docs/18, and handoff §7 for r-zig-pixi.
    retire, native win-arm64 zig becomes possible.
 10. No upstream filing (drafts in docs/12); workarounds self-contained; the
     user commits and pushes; I never commit.
-11. **One build number per package per release (2026-10-06, docs/13):**
+11. **One build number per package per release (2026-10-06, docs/13), first applied 2026-10-07:**
     from the next release on every published package is rebuilt on all six
     subdirs at one number, so a release is identifiable by its build number
     alone; per-subdir rebuilds between releases are hotfixes declared in
     docs/14 and `scripts/build-alignment.json`. The 0.17 wave is the first
-    such release: **lld-zig 5, flang-zig 6, flang-rt-zig 10, llvm-zig 4**
-    (recipe.yaml comments carry the numbers; `number:` is bumped at wave
-    time; adjust if a hotfix lands first).
+    such release was pulled forward: **lld-zig 5, flang-zig 6, flang-rt-zig
+    10, llvm-zig 4 are the zig 0.16 release built 2026-10-07** (r-zig-pixi's
+    final 0.16 set); the 0.17 wave (or the upstream-zig switch, docs/19 §6)
+    takes **lld 6 / flang 7 / flang-rt 11 / llvm-zig 5**
+    (`build-alignment.json` `next_release`). No zig run constraint on any
+    package: it cannot act on published builds and run metadata stays
+    minimal; consumers pin build numbers and add upper bounds when 0.17
+    packages appear.
 12. **Load-time dependency allowlist tripwire (patch written 2026-10-06,
     effective at the next rebuild):** the end-of-build check is now
     positive — Linux: glibc's `libc/libm/libdl/libpthread/librt/libresolv/
@@ -149,7 +178,10 @@ next actions), `docs/11-r-zig-integration.md` (items 7, 8 pointers),
 (index 18), `packages/*/recipe/build.sh` (allowlist tripwire), `packages/*/
 recipe/build.bat` (Windows tripwire), `packages/*/recipe/recipe.yaml`
 (NEXT build-number comments only; `number:` untouched), `pixi.lock`
-(`pixi update`, all environments), `.github/workflows/{build,test}.yml` +
+(`pixi update`, all environments), `docs/19-standalone-fortran-toolchain.md` +
+`docs/19-file-lists/` (new), `scripts/carve-fortran-standalone.py` (new),
+`packages/flang-zig/recipe/flang-compile.cfg.in` (new) + its rendering in
+flang-zig's `build.sh`/`build.bat`/`recipe.yaml` test, `.github/workflows/{build,test}.yml` +
 `.github/actions/stage/action.yml` (actions bumped: checkout v7,
 upload-artifact v7, download-artifact v8, setup-pixi v0.11.0). In r-zig-pixi: handoff `§7` appended
 (their file, their push). Previous sessions' work is all pushed (tree was
@@ -157,12 +189,16 @@ clean at c2c061f plus the 10-03 RESTART_PROMPT/docs/10 edits).
 
 ## What remains (in order)
 
-1. zig 0.17 wave when conda-forge's main label has `zig_impl_*` 0.17.0:
-   bump the four `variants.yaml` pins and the four `number:` fields (5/6/10,
-   llvm-zig 4) in one change; hand-declare the virtual floors in `run:`
-   (docs/18 §6.3); linux-64 first and read the new allowlist tripwires;
-   then the rest; `test.yml`; `check-build-alignment.py` (flip `release`
-   in `build-alignment.json` to the new numbers, delete `legacy`); drop
+0. Finish the 2026-10-07 release: win-arm64 chain → static checks → user's
+   go → upload per host (docs/14) → prune → alignment check → `test.yml`
+   → finalize docs/14 and handoff §9 with the win-arm64 strings.
+1. zig 0.17 wave when conda-forge's main label has `zig_impl_*` 0.17.0 (or
+   the user chooses upstream zig, docs/19 §6): bump the four `variants.yaml`
+   pins and the four `number:` fields to 6/7/11 (llvm-zig 5) in one change
+   (floors, tripwires, flang-compile.cfg, OpenMP floor are already in);
+   linux-64 first and read the tripwires;
+   then the rest; `test.yml`; `check-build-alignment.py` (move
+   `next_release` into `release` in `build-alignment.json`); drop
    `wcstold_compat.c` and `csh_arm64.def`/`-lcompat_arm64` after win-arm64
    is green on 0.17; consider a native win-arm64 lane. Pre-reads: docs/17
    §5–§8, docs/18 §6.
@@ -172,9 +208,14 @@ clean at c2c061f plus the 10-03 RESTART_PROMPT/docs/10 edits).
 3. r-zig-pixi (their side): re-lock to flang-rt ≥ 9; linux-64 → flang-zig
    is the last platform not on flang-pixi (optional); build.zig on zig 0.17
    (docs/17 §4); vision items in handoff §7.
-4. Optional hygiene: `docs/11-r-integration.md` is an old duplicate of
+4. r-zig-pixi standalone archive (docs/19): their side carves with the
+   script; flang-pixi side at wave time = `llvm-openmp >=23` in flang-rt's
+   run, drop the four duplicate Windows runtime archives, and (if a
+   downloadable artifact is ever wanted) a `carve` job producing GitHub
+   release assets from the published `.conda`.
+5. Optional hygiene: `docs/11-r-integration.md` is an old duplicate of
    `docs/11-r-zig-integration.md` (not in the index) — decide keep/delete.
-5. GHA `build.yml` has never been run (census only).
+6. GHA `build.yml` has never been run (census only).
 
 ## Credentials / infra
 
@@ -203,6 +244,9 @@ bash scripts/check-load-deps.sh <dir> …                # "load-dep allowlist O
 # the four patched tripwires parse: for p in llvm-zig lld-zig flang-zig flang-rt-zig; do bash -n packages/$p/recipe/build.sh; done
 # lock state: rattler-build unchanged, no 0.17 on the main label
 grep -o 'rattler-build-[0-9.]*' pixi.lock | sort -u ; pixi search zig_impl_linux-64 -c conda-forge | grep -E '^Version'
+# standalone Fortran set (docs/19): carve, then compile with nothing else on PATH and link with zig
+pixi exec --spec "python>=3.14" python scripts/carve-fortran-standalone.py --out /tmp/carve channel/linux-64/flang-zig-*.conda channel/linux-64/flang-rt-zig-*.conda
+env -i PATH=/tmp/carve/linux-64/flang-standalone/bin flang -c packages/flang-rt-zig/recipe/modules.f90 -o m.o && zig cc -target x86_64-linux-gnu.2.17 m.o /tmp/carve/linux-64/flang-standalone/lib/libflang_rt.runtime.a -lm -o m && ./m
 # zig 0.17 readiness (docs/17 §5): on the zig_dev snapshot or the official tarball
 #   zig cc -target x86_64-linux-gnu.2.17 h.c && nm -D a.out | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1   # <= 2.17
 #   zig cc -target aarch64-windows-gnu w.c (wcstold) and csh.c -lkernel32 -> private api set imports

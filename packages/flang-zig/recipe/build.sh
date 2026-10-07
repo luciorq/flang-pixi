@@ -309,6 +309,11 @@ if [[ -n "${CONDA_TOOLCHAIN_HOST:-}" ]]; then
   # The driver looks for <triple>-flang.cfg *and* flang.cfg; provide both so it
   # works whether or not the caller passes --target.
   cp "${cfg}" "${PREFIX}/bin/flang.cfg"
+  # Compile-only variant for use outside conda (docs/19; template in the
+  # recipe dir): the intrinsic-modules line alone. Not read by default — the
+  # driver loads flang.cfg — so it changes nothing for conda users.
+  sed -e "s|@MAJOR@|${PKG_VERSION%%.*}|g" -e "s|@FINC_TRIPLE@|${CONDA_TOOLCHAIN_HOST}|g" \
+    "${RECIPE_DIR}/flang-compile.cfg.in" > "${PREFIX}/bin/flang-compile.cfg"
 fi
 
 # Build-time tripwire for zig-feedstock glibc-baseline drift (docs/13): fail
@@ -365,7 +370,10 @@ if [[ "${target_platform}" == linux-* ]]; then
   if [[ -n "${_tw_od}" ]]; then
     _tw_n=0
     while IFS= read -r -d '' _f; do
-      _needed=$("${_tw_od}" -p "${_f}" 2>/dev/null | awk '/^ *NEEDED/{print $2}' | grep -v -E "${_tw_allow_elf}" || true)
+      # Shared libraries under $PREFIX/lib may also need SIBLINGS shipped in
+      # the same lib dir (llvm-zig's MLIR runner libraries load each other);
+      # executables stay libc-only. First seen on the 2026-10-06 release.
+      _needed=$("${_tw_od}" -p "${_f}" 2>/dev/null | awk '/^ *NEEDED/{print $2}' | grep -v -E "${_tw_allow_elf}" | while read -r _n; do [[ "${_f}" == "${PREFIX}/lib/"* && -e "${PREFIX}/lib/${_n}" ]] || echo "${_n}"; done || true)
       [[ -n "${_needed}" ]] && _tw_fail "${_f} needs a library outside the libc allowlist: $(echo ${_needed} | tr '\n' ' ') — docs/18 §6.6 (a shared libc++/libstdc++ here means the ZIG_LIB_DIR mirror stopped working, docs/16)"
       _tw_n=$((_tw_n+1))
     done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -perm -u+x -o -name '*.so*' \) -print0 2>/dev/null)
@@ -381,7 +389,9 @@ elif [[ "${target_platform}" == osx-* ]]; then
     file "${_f}" 2>/dev/null | grep -qE 'Mach-O|ar archive' || continue
     # Allowlist (docs/18 §6.6): only libSystem may be loaded. LC_LOAD_* and
     # LC_REEXPORT_DYLIB are counted; a dylib's own LC_ID_DYLIB is not.
-    _loads=$(otool -l "${_f}" 2>/dev/null | awk '/LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB/{c=1} c&&/ name /{print $2; c=0}' | grep -v -E "${_tw_allow_macho}" || true)
+    # Dylibs under $PREFIX/lib may load SIBLINGS from the same dir via @rpath
+    # (llvm-zig's MLIR runner dylibs do); executables stay libSystem-only.
+    _loads=$(otool -l "${_f}" 2>/dev/null | awk '/LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB/{c=1} c&&/ name /{print $2; c=0}' | grep -v -E "${_tw_allow_macho}" | while read -r _n; do [[ "${_f}" == "${PREFIX}/lib/"* && "${_n}" == @rpath/* && -e "${PREFIX}/lib/${_n#@rpath/}" ]] || echo "${_n}"; done || true)
     [[ -n "${_loads}" ]] && _tw_fail "${_f} loads a library outside the libc allowlist: $(echo ${_loads} | tr '\n' ' ') — docs/18 §6.6 (a shared libc++ here means the ZIG_LIB_DIR mirror stopped working, docs/16)"
     _minos=$(otool -l "${_f}" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; b=0}' | sort -uV | tail -1)
     if [[ -n "${_minos}" && "$(printf '%s\n' "${_minos}" "${_tw_floor}" | sort -V | tail -1)" != "${_tw_floor}" ]]; then

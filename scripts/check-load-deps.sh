@@ -12,7 +12,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 ALLOW_ELF='^(libc|libm|libdl|libpthread|librt|libresolv|libutil)\.so\.[0-9]+$|^ld-linux[-a-z0-9_]*\.so\.[0-9]+$'
 ALLOW_MACHO='^/usr/lib/libSystem\.B\.dylib$'
-ALLOW_PE='^(kernel32|ntdll|advapi32|shell32|ole32|version)\.dll$|^api-ms-win-crt-[a-z0-9]+-l1-1-0\.dll$'
+ALLOW_PE='^(kernel32|ntdll|advapi32|shell32|ole32|version|crypt32|winhttp)\.dll$|^api-ms-win-crt-[a-z0-9]+-l1-1-0\.dll$'
 od="${OBJDUMP:-}"
 if [[ -z "$od" ]]; then
   if command -v llvm-objdump >/dev/null 2>&1; then od=llvm-objdump; else od="pixi exec -s llvm-tools -- llvm-objdump"; fi
@@ -24,15 +24,15 @@ for root in "$@"; do
     case "$kind" in
       ELF*shared*|ELF*executable*|ELF*pie*)
         n=$((n+1))
-        out=$($od -p "$f" 2>/dev/null | awk '/^ *NEEDED/{print $2}' | grep -v -E "$ALLOW_ELF" || true)
+        out=$($od -p "$f" 2>/dev/null | awk '/^ *NEEDED/{print $2}' | grep -v -E "$ALLOW_ELF" | while read -r n; do [[ "$f" == *.so* && -e "$(dirname "$f")/$n" ]] || echo "$n"; done || true)   # shared libs may need siblings
         [[ -n "$out" ]] && { echo "FAIL $f: NEEDED outside allowlist: $(echo $out | tr '\n' ' ')"; bad=$((bad+1)); } ;;
       Mach-O*)
         n=$((n+1))
-        out=$($od --macho --private-headers "$f" 2>/dev/null | awk '/LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB/{c=1} c&&/ name /{print $2; c=0}' | grep -v -E "$ALLOW_MACHO" || true)
+        out=$($od --macho --private-headers "$f" 2>/dev/null | awk '/LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB/{c=1} c&&/ name /{print $2; c=0}' | grep -v -E "$ALLOW_MACHO" | while read -r n; do [[ "$f" == *.dylib && "$n" == @rpath/* && -e "$(dirname "$f")/${n#@rpath/}" ]] || echo "$n"; done || true)
         [[ -n "$out" ]] && { echo "FAIL $f: loads outside allowlist: $(echo $out | tr '\n' ' ')"; bad=$((bad+1)); } ;;
       PE32*)
         n=$((n+1))
-        out=$(python3 "$here/pe-resolve-imports.py" "$f" 2>/dev/null | awk '/^  /{print $1}' | grep -v -i -E "$ALLOW_PE" || true)
+        out=$(python3 "$here/pe-resolve-imports.py" "$f" 2>/dev/null | awk '/^  /{print $1}' | grep -v -i -E "$ALLOW_PE" | while read -r n; do [[ "$f" == *.dll && -e "$(dirname "$f")/$n" ]] || echo "$n"; done || true)
         [[ -n "$out" ]] && { echo "FAIL $f: imports outside allowlist: $(echo $out | tr '\n' ' ')"; bad=$((bad+1)); } ;;
     esac
   done < <(find "$root" -type f \( -perm -u+x -o -name '*.so*' -o -name '*.dylib' -o -name '*.exe' -o -name '*.dll' \) -print0 2>/dev/null)

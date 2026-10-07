@@ -71,6 +71,122 @@ ABI probe / CRAN-flang parity checks.
 6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
    unfiled by decision.
 
+## 2026-10-07 — first aligned release built: lld-zig 5 / flang-zig 6 / flang-rt-zig 10 on all six subdirs (zig 0.16.0, LLVM 23.1.1); upload pending the user's go
+
+**Decision (user, 2026-10-06 evening):** r-zig-pixi needs a final zig 0.16
+release before any 0.17 work; do a FULL release under the docs/13
+one-number-per-release rule. Numbers: llvm-zig 4 (build-only), lld-zig 5,
+flang-zig 6, flang-rt-zig 10. No zig run constraint (cannot act on
+published builds; run metadata stays minimal — r-zig-pixi pins by build
+number).
+
+**What the release carries** (all prepared earlier this session): the
+load-dependency allowlist tripwires live in all four build scripts
+(docs/18 §6.6); hand-declared `__glibc >=2.17,<3.0.a0` / `__osx >=11.0`
+in `run:` of all four recipes (closes the missing floor on linux-aarch64);
+`check-stdlib-floor.py` now fails on a MISSING floor; flang-zig ships
+`bin/flang-compile.cfg` (+ recipe test); flang-rt-zig: hidden-visibility
+CFLAGS/CXXFLAGS on Windows too, `llvm-openmp >=23` in run everywhere, the
+four duplicate Windows runtime archives dropped; zig pinned 0.16.0,
+feedstock build unpinned (all unix packages record `zig_impl_* 0.16.0
+build 20` in `zig-toolchain.txt`; Windows resolved build 20 as well).
+`scripts/build-alignment.json`: `release` = 5/6/10, `legacy` deleted,
+`next_release` = 6/7/11/5.
+
+**Two tripwire corrections found by the release build itself** (both
+genuine allowlist gaps, fixed before any package was accepted):
+1. llvm-zig's MLIR runner libraries load each other
+   (`@rpath/libmlir_float16_utils.23.1.dylib`, `libmlir_*.so`, `.dll`):
+   shared libraries under `$PREFIX/lib` (DLLs in their own dir) may now
+   depend on SIBLINGS shipped beside them; executables stay libc-only.
+   First osx-arm64 llvm-zig attempt failed at 19:39 on it; all three
+   chains were restarted at 19:41–19:43.
+2. Windows: LLVM's debuginfod client (`llvm-symbolizer`, `llvm-objdump`,
+   `llvm-cov`, `llvm-profdata`, `llvm-addr2line`, `llvm-otool`,
+   `llvm-debuginfod*`) imports `CRYPT32.dll` and `WINHTTP.dll` (OS DLLs);
+   added to the Windows allowlist (llvm-zig only, never published). The
+   first win-64 llvm-zig attempt (1 h 40 min) failed on it at 21:2x;
+   kappa restarted at 21:32.
+
+**Builds and checks per subdir** (times are the stage durations; every
+stage passed its glibc-ceiling / allowlist / Mach-O-minos / hidden-runtime
+/ stdlib-floor tripwires and its recipe test):
+
+| subdir | host | llvm-zig 4 | lld-zig 5 | flang-zig 6 | flang-rt-zig 10 | post-build checks (docs/19 §2a procedure) |
+|---|---|---|---|---|---|---|
+| linux-64 | gamma native | `zig_c9d7567_4` 38 min | `zig_495485e_5` 3 min | `zig_b4d422a_6` 59 min | `zig_3054d59_10` 3 min | carve → `env -i` compile → zig link → hello/modules/omp_lib_use run (threads=2); runtime probe `.hidden`; allowlist OK; floors OK |
+| linux-aarch64 | gamma cross | `zig_7c19dfe_4` 33 min | `zig_ea2e60d_5` 3 min | `zig_22c055e_6` 59 min | `zig_ea2e60d_10` 3 min | static checks only (floor `__glibc >=2.17` now present, allowlist OK, `.hidden`); native run on the ubuntu-24.04-arm runner after upload |
+| osx-arm64 | omicron native | `zig_550b590_4` 23 min | `zig_1c2e337_5` 2 min | `zig_3010818_6` 28 min | `zig_a7874a2_10` 3 min | carve → compile → zig link → run OK (libSystem only, minos 11.0); probe "private external"; allowlist OK |
+| osx-64 | omicron Rosetta | `zig_a1902e1_4` 44 min | `zig_42a4ac4_5` 4 min | `zig_0257dba_6` 41 min | `zig_e4a4366_10` 7 min | same, x86_64 under Rosetta incl. OpenMP against the x86_64 libomp (threads=2) |
+| win-64 | kappa native | `zig_d301e87_4` ~1 h 45 | `zig_21cbb96_5` ~5 min | `zig_0ff6bf8_6` 1 h 35 | `zig_03d85fb_10` ~5 min | carve → compile (PATH = carved bin) → zig link → run OK; one runtime archive shipped; allowlist OK; **Fortran DLL exports 24 = the package's own symbols with the new runtime, identical to build 4** (llvm-readobj A/B); the new archive carries `-exclude-symbols:` directives for its hidden symbols |
+| win-arm64 | kappa cross | `zig_c0395dd_4` 81 min | `zig_279c4b1_5` 10 min | `zig_52d3e10_6` 83 min | `zig_1e4a608_10` 12 min | static checks (floors, allowlist on 142–144 PE files at build time and on the extracted packages on gamma, one runtime archive, machine 0xaa64); native run on the windows-11-arm runner after upload |
+
+**Third incident, operational:** the first win-arm64 llvm-zig attempt
+(01:02–02:24) built and passed every tripwire, then failed writing the
+3.8 GB archive — kappa's disk was full (`os error 112`): the 20 GB work
+tree of the earlier failed attempt had stayed in `rb-out\bld` (rb-stage
+only cleared it after success) on top of 42 GB of rattler package cache.
+Freed 30 GB (stale work tree, old `armout`, cached test envs, the package
+cache's extracted copies of old llvm-zig/flang-zig builds, superseded
+channel files via `prune-channel.py`), made `rb-stage.sh`/`.bat` clear a
+leftover work tree *before* each build, and re-ran the win-arm64 chain only
+(02:30–05:37). Chain total on kappa: 10 h wall clock for eight stages.
+
+(The win-64 build strings are unchanged from the previous release because
+their variant hash inputs did not change on Windows; the build NUMBER is
+what identifies the release.)
+
+**All six subdirs built and checked by 05:40 EDT.** Not yet done: upload (waits for the user's go), then
+`prune-universe.py --apply`, `check-build-alignment.py`, `test.yml` on
+the six runners, docs/14 final table.
+
+## 2026-10-06 (later) — standalone Fortran toolchain proposal from r-zig-pixi: measured on three platforms, docs/19
+
+**Context (user):** r-zig-pixi proposed a conda-free archive carved from
+flang-zig + flang-rt-zig (flang compiles, zig links the static runtime).
+
+**Ran:** carved the minimal set from the published files on gamma
+(linux-64), omicron (osx-arm64, osx-64 Rosetta) and kappa (win-64) and
+tested it with `env -i` / `PATH` = its `bin` only: `hello`, `modules`
+(derived types), `use omp_lib`, OpenMP directives all compile on all
+three; zig links the static archive and runs everywhere with no lld-zig,
+no sysroot, no SDK path, no Windows CRT snapshot (OpenMP against
+conda-forge's libomp: threads=2). The flang *driver* link needs more:
+Linux `ld.lld` + the 265 MB conda sysroot (without it GLIBC_2.34 on a 2.39
+host) + flang-rt's compiler-rt crt objects + `--rtlib=compiler-rt` + the
+shipped `lib/libflang_rt.runtime.a` symlink; macOS `SDKROOT` (then Apple
+`ld` or `ld64.lld` both work); Windows `ld.lld` + the 14 MB MinGW CRT
+snapshot. cfg: Linux and Windows compile with **no cfg at all** (flang-rt
+ships the intrinsic-module dir under the driver's default triple name:
+`x86_64-conda-linux-gnu`, `x86_64-w64-windows-gnu`); macOS needs the one
+`-fintrinsic-modules-path` line (driver triple carries the host OS
+version); the flag from zig-fc removes the cfg everywhere. Sizes (zstd
+-19): linux-64 43.9 MB, linux-aarch64 41.3, osx-arm64 30.5, osx-64 35.0,
+win-64 40.1, win-arm64 35.7 (raw 144–210 MB, the driver binary is
+136–196 MB of it). Windows: a zig-linked Fortran DLL exports 24 symbols,
+all its own (lld's MinGW auto-export skips archive members) — flang-rt
+10's hidden-visibility flags are parity, not a fix; `libomp.dll.a` /
+`libatomic.a` exist only for the driver's `-latomic -lomp`. Upstream zig
+0.16.0 vs conda's: identical machine code (same explicit flags), bytes
+differ in the clang version string only, linked programs differ in
+NEEDED (upstream `libc` only vs conda's eight split libs); switching =
+own shims (`-mcpu=baseline` is mandatory: plain zig emits native-CPU code
+without it), no mirror, no conda-forge wait for 0.17 — a principle
+decision, unchanged. OpenMP: `omp_lib.mod` declares 6.0-era entry points
+→ recommend `llvm-openmp >=23` on all subdirs in flang-rt 10.
+**Recommendation: documented file set + `scripts/carve-fortran-standalone.py`**
+(written, tested on all six subdirs; linux-64 tree also relocated from
+the tar.zst), no second published artifact (surface, storage, drift vs
+build numbers); if a download is wanted later, GitHub release assets
+generated from the published `.conda` with build numbers in the name.
+
+**Changed:** docs/19 (new) + `docs/19-file-lists/` (18 full file lists
+from `paths.json`), `scripts/carve-fortran-standalone.py` (new),
+`packages/flang-zig/recipe/flang-compile.cfg.in` (new) rendered by
+build.sh/build.bat into `bin/flang-compile.cfg` + recipe test (ships with
+build 6; no rebuild), README index, RESTART_PROMPT.md, r-zig-pixi handoff
+§8, this entry.
+
 ## 2026-10-06 — vision recorded (docs/18); libomp and dependency trims re-examined with real data; one-build-number-per-release rule; allowlist tripwire patched; lock refreshed
 
 **Context (user):** record the long-term goal — a conda channel of portable

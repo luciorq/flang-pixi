@@ -70,15 +70,18 @@ build:
   #    build number — they were unaffected.
   # 3: static libc++ on every subdir (ZIG_LIB_DIR mirror, docs/16); macOS
   #    drops the libcxx dependency. Only osx-arm64/osx-64 were rebuilt.
-  # NEXT: 4 — the zig 0.17 wave is the first release under the
-  #    one-build-number-per-release rule (docs/13, 2026-10-06): every
-  #    published package is rebuilt on ALL SIX subdirs at ONE number
-  #    (lld-zig 5 / flang-zig 6 / flang-rt-zig 10 / llvm-zig 4 (build-only)), so a release is
-  #    identifiable by its build number alone. Partial per-subdir rebuilds
-  #    between releases are hotfixes and must be declared in docs/14 and
-  #    scripts/build-alignment.json. Adjust the number if a hotfix lands
-  #    first. Why the numbers differ per subdir today: docs/13.
-  number: 3
+  # 4: FIRST ALIGNED RELEASE (2026-10-06, docs/13 rule): all three
+  #    consumer packages rebuilt on ALL SIX subdirs at one number each
+  #    (lld-zig 5 / flang-zig 6 / flang-rt-zig 10; llvm-zig 4 build-only),
+  #    still zig 0.16.0 / LLVM 23.1.1 — r-zig-pixi's final 0.16 release
+  #    before any 0.17 work. Carries: load-dependency allowlist tripwires
+  #    (docs/18 §6.6), hand-declared __glibc/__osx floors in run (docs/18
+  #    §6.3; fixes the floor missing on the linux-aarch64 packages).
+  # NEXT: 5 — the zig 0.17 wave (or the upstream-zig switch, docs/19 §6):
+  #    again one number on all six subdirs (lld-zig 6 / flang-zig 7 /
+  #    flang-rt-zig 11 / llvm-zig 5); scripts/build-alignment.json
+  #    `next_release`. Hotfixes between releases: docs/14 + the JSON.
+  number: 4
   # `zig_` prefix in the build string is a deliberate warning label: these
   # artifacts are NOT interchangeable with conda-forge's llvm packages.
   string: zig_${{ hash }}_${{ build_number }}
@@ -151,6 +154,17 @@ requirements:
     # No libcxx on any platform since 2026-09-30: libc++ is zig's, static, on
     # every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16).
   run:
+    # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06): the
+    # stdlib run export reached linux-64 but not the cross-built
+    # linux-aarch64 packages (they declared no __glibc at all), so the floor
+    # is written here explicitly on every subdir. Values = c_stdlib_version
+    # (variants.yaml): glibc 2.17, macOS 11.0. Nothing on Windows (UCRT).
+    - if: linux
+      then:
+        - __glibc >=${{ c_stdlib_version }},<3.0.a0
+    - if: osx
+      then:
+        - __osx >=${{ c_stdlib_version }}
   run_exports:
     strong:
       - ${{ pin_subpackage('llvm-zig', upper_bound='x.x') }}

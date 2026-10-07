@@ -1,0 +1,8 @@
+# lld-zig-23.1.1-zig_852aba2_0  subdir=linux-aarch64  build=zig_852aba2_0  depends=[]  files=6  (from info/paths.json, generated 2026-10-06 for docs/19)
+L           3 bin/ld.lld
+L           3 bin/ld64.lld
+H    62666480 bin/lld
+L           3 bin/lld-link
+L           3 bin/wasm-ld
+H         136 share/lld-zig/zig-toolchain.txt
+# total 62666628 bytes

@@ -370,7 +370,7 @@ anything else:
 |---|---|---|
 | Linux | `libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libresolv.so.2 libutil.so.1` and the loader `ld-linux-*.so.*` | `librt`, `libresolv`, `libutil` added: the 2.17 target links the pre-2.34 split libraries (§6.1); all are glibc |
 | macOS | `/usr/lib/libSystem.B.dylib` only (plus the existing `minos <= floor` check) | none |
-| Windows | `KERNEL32.dll`, `ntdll.dll`, `ADVAPI32.dll`, `SHELL32.dll`, `ole32.dll`, `VERSION.dll` and `api-ms-win-crt-*-l1-1-0.dll` | `ADVAPI32`, `SHELL32`, `ole32`, `VERSION` added: LLVM Support uses them (known folders, registry/crypto, file version info); they are OS DLLs present on every Windows, not runtimes |
+| Windows | `KERNEL32.dll`, `ntdll.dll`, `ADVAPI32.dll`, `SHELL32.dll`, `ole32.dll`, `VERSION.dll`, `CRYPT32.dll`, `WINHTTP.dll` and `api-ms-win-crt-*-l1-1-0.dll` | `ADVAPI32`, `SHELL32`, `ole32`, `VERSION` added: LLVM Support uses them (known folders, registry/crypto, file version info); `CRYPT32`/`WINHTTP` added on the first release build: LLVM's debuginfod client in `llvm-symbolizer`/`llvm-objdump`/`llvm-cov` (llvm-zig only, never published). All are OS DLLs present on every Windows, not runtimes. Shared libraries may additionally load siblings from their own directory (llvm-zig's MLIR runner libraries), on all three platforms |
 
 Implementation: `packages/*/recipe/build.sh` — the Linux loop now prints
 every `NEEDED` entry and fails on one outside the allowlist; the macOS loop

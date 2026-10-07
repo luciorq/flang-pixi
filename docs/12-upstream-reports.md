@@ -187,3 +187,70 @@ libraries); upstream mingw-w64 already restricts the entry
 (Earlier draft blamed a missing aarch64 `setjmp` implementation; the arm64
 UCRT does export `__intrinsic_setjmpex`, so that report was wrong and has
 been withdrawn — docs/10 2026-09-19.)
+
+## 7. zig (windows-gnu): `zig cc -shared` without a .def auto-exports mingw CRT symbols (`atexit`), so an exe linking the import library fails with `duplicate symbol: atexit`
+
+*Draft received from r-zig-pixi 2026-10-07 (they build every R package DLL
+with `zig cc -shared` on win-64); re-run here the same day. **Not filed**
+(standing rule; the user decides). r-zig-pixi's existing search found no
+Codeberg report; related but different: GitHub ziglang/zig #14892 (stage3 +
+MSVC, closed) and #23642 (pass `-exclude-all-symbols` through `zig cc`).*
+
+**Repro** (any host, target `x86_64-windows-gnu`):
+
+```c
+// lib.c
+int answer(void) { return 42; }
+// main.c
+#include <stdlib.h>
+int answer(void);
+static void bye(void) {}
+int main(void) { atexit(bye); return answer() == 42 ? 0 : 1; }
+```
+```
+zig cc -target x86_64-windows-gnu -shared -o lib.dll lib.c -Wl,--out-implib,lib.lib
+zig cc -target x86_64-windows-gnu -o main.exe main.c lib.lib
+lld-link: error: duplicate symbol: atexit
+>>> defined at .../lib/libc/mingw/crt/crtexe.c:328 (crt2.obj)
+>>> defined at lib.lib(lib.dll)
+```
+
+`lib.dll` exports `_CRT_INIT __mingw_module_is_dll answer atexit`
+(`llvm-readobj --coff-exports`). LLD's MinGW auto-export (no .def, no
+`dllexport`) exports every global except the C runtime's, which it
+recognises by the GNU object file names (`crt2.o`, `dllcrt2.o`, …). zig
+materialises its CRT as `crt2.obj` / `dllcrt2.obj` (seen in the zig cache),
+so `crtdll.c`'s `atexit` and the other CRT globals are exported as the DLL's
+own; mingw-w64's own CRT objects are skipped.
+
+**Re-run 2026-10-07 on gamma (cross from linux-64):**
+
+| zig | `lib.dll` exports | `main.exe` link | with the workaround object |
+|---|---|---|---|
+| upstream 0.16.0 (ziglang.org tarball) | `… answer atexit` | **fails** (duplicate `atexit`) | exports `… answer`; link OK |
+| upstream **0.17.0** (ziglang.org tarball) | same | **fails** | OK |
+| conda-forge `zig_impl_linux-64 0.16.0` build 20 | same | **fails** | — |
+
+So the 0.17.0 release does not fix it; conda-forge's *win-64* zig hides it
+only through its `mingw-crtexe-no-atexit` / `ucrtbase-export-atexit-alias`
+patches (docs/16 D8), which is why the problem was invisible to r-zig-pixi
+until it cross-compiled with the Linux zig. Expected upstream behaviour: the
+CRT objects zig links should be excluded from auto-export like mingw-w64's
+(either by emitting the GNU object names or by an explicit
+`-exclude-symbols` drectve in zig's `crtdll.c` / `crtexe.c`).
+
+**Workaround** (r-zig-pixi `build.zig`, `addSharedLib` on Windows; keep it
+through the 0.17 wave and the upstream-zig switch): an object in each DLL
+holding
+
+```c
+__asm__(".section .drectve,\"yni\"\n\t.ascii \" -exclude-symbols:atexit\"\n\t.text");
+```
+
+(the same mechanism the hidden-visibility flang-rt archive now uses for its
+own symbols, docs/19 §5).
+
+**flang-pixi exposure:** none in the published set — lld-zig and flang-zig
+ship executables only, flang-rt-zig ships archives. llvm-zig's MLIR runner
+DLLs are built with `zig cc -shared` and carry the same stray exports, but
+llvm-zig is never published and nothing links their import libraries.

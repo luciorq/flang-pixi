@@ -2,8 +2,11 @@
 """Delete superseded consumer-set files from prefix.dev `universe`.
 
 Rule: for each of lld-zig / flang-zig / flang-rt-zig and each subdir, keep
-the newest build number of VERSION (default 23.1.1); everything else of
-those three packages is deleted. llvm-zig is never on universe (asserted).
+the newest build number of VERSION (default 23.1.1) AND every build number
+listed under `retain` in scripts/build-alignment.json (release builds a
+published consumer pins exactly — r-zig-toolchain pins `*_5`/`*_6`/`*_10`,
+2026-10-07; deleting them 404s its installs); everything else of those
+three packages is deleted. llvm-zig is never on universe (asserted).
 Dry run by default; `--apply` performs `batchDeletePackageVariants`. Needs
 a key with the `channel:delete-package` scope in ~/.rattler/credentials.json
 (the 2026-09-30 key has it). Usage: prune-universe.py [--apply] [--version V]
@@ -25,8 +28,10 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--apply", action="store_true"); ap.add_argument("--version", default="23.1.1")
     a = ap.parse_args()
     key = json.load(open(os.path.expanduser("~/.rattler/credentials.json")))["*.prefix.dev"]["BearerToken"]
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build-alignment.json")
+    retain = {p: set(v) for p, v in (json.load(open(cfg_path)).get("retain") or {}).items()} if os.path.exists(cfg_path) else {}
     assert not variants(key, "llvm-zig"), "llvm-zig must never be on universe"
-    keep, delete = {}, []
+    keep, delete, retained = {}, [], []
     for pkg in PKGS:
         for plat, fn in variants(key, pkg):
             m = re.match(rf"{re.escape(pkg)}-([\d.]+)-zig_[0-9a-f]+_(\d+)\.conda$", fn)
@@ -35,6 +40,8 @@ def main():
             ver, bn = m.group(1), int(m.group(2))
             if ver != a.version:
                 delete.append((plat, fn)); continue
+            if bn in retain.get(pkg, set()):
+                retained.append((plat, fn)); continue
             k = (pkg, plat)
             if k not in keep or bn > keep[k][1]:
                 if k in keep: delete.append((plat, keep[k][0]))
@@ -42,6 +49,8 @@ def main():
             else:
                 delete.append((plat, fn))
     print("keep (%d):" % len(keep)); [print("  ", plat, fn) for (pkg, plat), (fn, bn) in sorted(keep.items(), key=lambda x: (x[0][1], x[0][0]))]
+    print("retained for pinned consumers (%d):" % len(retained)); [print("  ", plat, fn) for plat, fn in sorted(retained)]
+    # a retained build that is also the newest counts once; keep newest-per-subdir of the rest
     print("delete (%d):" % len(delete)); [print("  ", plat, fn) for plat, fn in sorted(delete)]
     if not delete:
         return

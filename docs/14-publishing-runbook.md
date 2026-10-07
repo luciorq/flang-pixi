@@ -6,7 +6,7 @@ channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: first ALIGNED release built and checked on all six subdirs 2026-10-07 (lld-zig 5 / flang-zig 6 / flang-rt-zig 10), upload pending the user's go; universe still holds the pre-rule spread
+## Status: first ALIGNED release PUBLISHED 2026-10-07 — lld-zig 5 / flang-zig 6 / flang-rt-zig 10 on all six subdirs (universe = exactly these 18 files)
 
 One line per package, one build number per release (docs/13 rule). Verify
 after upload with `python3 scripts/check-build-alignment.py` (expects the
@@ -19,17 +19,35 @@ after upload with `python3 scripts/check-build-alignment.py` (expects the
 | flang-rt-zig | **10** | `zig_3054d59_10` | `zig_ea2e60d_10` | `zig_a7874a2_10` | `zig_e4a4366_10` | `zig_03d85fb_10` | `zig_1e4a608_10` |
 
 Built with zig 0.16.0 (zig_impl build 20 on every host), LLVM 23.1.1;
-what changed versus the previous spread: docs/10 2026-10-07. Still on
-universe until the upload: the pre-rule spread lld `_1/_0/_4/_4/_0/_3`,
-flang `_2/_1/_5/_5/_1/_4`, flang-rt `_9/_9/_9/_9/_4/_7` (hotfix history in
-docs/13). `prune-universe.py --apply` after the upload removes it.
+what changed versus the previous spread: docs/10 2026-10-07. Uploaded,
+pruned and tested by the user on 2026-10-07: `check-build-alignment.py` →
+"build alignment OK" (release build 5/6/10), `prune-universe.py` → keep 18 /
+delete 0, `test.yml` run 37610086141 green on all six native runners. The
+pre-rule spread (lld `_1/_0/_4/_4/_0/_3`, flang `_2/_1/_5/_5/_1/_4`,
+flang-rt `_9/_9/_9/_9/_4/_7`; hotfix history in docs/13) is gone from the
+channel.
+
+**Consumer contract (r-zig-pixi, 2026-10-07):** (1) build strings always
+end in `_<build number>` (`zig_<hash>_<N>`, the recipes' `string:` line) —
+r-zig-toolchain's recipe pins `flang-zig ==23.1.1 *_6`, `lld-zig ==23.1.1
+*_5`, `flang-rt-zig ==23.1.1 *_10` (build-string form: the only pin every
+solver parses; pixi/rattler-build reject build-number ranges, libmamba/
+micromamba reject `[build_number=…]` brackets). (2) **Release builds a
+published r-zig-toolchain pins are never pruned**: they are listed under
+`retain` in `scripts/build-alignment.json` and `prune-universe.py` skips
+them even after a newer release (their lock broke with 404s when
+superseded builds were deleted on 2026-10-01). Remove a set from `retain`
+only when r-zig-pixi says no published r-zig-toolchain pins it any more.
+Cost: ~6 files / ~0.6 GB kept per retained release on prefix.dev. (3) From
+the next release flang-zig pins its own lld-zig by build string
+(`lld-zig ==23.1.1 *_<lld build>`), so releases cannot mix.
 
 **Next release: lld-zig `_6`, flang-zig `_7`, flang-rt-zig `_11`** (llvm-zig
 `_5`, build-only) — the zig 0.17 wave or the upstream-zig switch (docs/19
 §6). Hotfixes between releases: declare in `scripts/build-alignment.json`
 `hotfixes` and note here.
 
-### Upload commands for this release (run only on the user's go)
+### Upload commands used for this release (template for the next one)
 
 Every host uploads its own subdirs from its channel directory with the
 stored key (`~/.rattler/credentials.json`); `--skip-existing` makes reruns

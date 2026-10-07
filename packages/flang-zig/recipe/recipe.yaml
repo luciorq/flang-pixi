@@ -18,6 +18,12 @@
 context:
   version: "23.1.1"
   major: "23"
+  # Build number of the lld-zig this flang-zig belongs with (same release,
+  # docs/13 rule). Pinned in run: so a flang-zig can never pair with an
+  # lld-zig from another release (r-zig-pixi request 2026-10-07: a 0.17-built
+  # lld-zig 6 must not join a 0.16-built flang-zig 6). Bump with every
+  # release together with build.number (next: lld 6 / flang 7).
+  lld_build: "5"
 
 package:
   name: flang-zig
@@ -67,6 +73,8 @@ build:
   #    §6.3; fixes the floor missing on the linux-aarch64 packages),
   #    and bin/flang-compile.cfg (compile-only driver config for use
   #    outside conda, docs/19 §4; rendered from recipe/flang-compile.cfg.in).
+  #    Build 7 (next) also pins its lld-zig by build string (`*_<lld_build>`,
+  #    context above) so releases cannot mix.
   # NEXT: 7 — the zig 0.17 wave (or the upstream-zig switch, docs/19 §6):
   #    again one number on all six subdirs (lld-zig 6 / flang-zig 7 /
   #    flang-rt-zig 11 / llvm-zig 5); scripts/build-alignment.json
@@ -126,7 +134,7 @@ requirements:
     # ships in flang-zig/flang-rt-zig themselves. So the runtime dep is the
     # 56 MiB lld-zig, not the ~3 GiB llvm-zig (which stays build/host-only).
     # See docs/10-status-log.md (2026-08-25).
-    - lld-zig ==${{ version }}
+    - lld-zig ==${{ version }} *_${{ lld_build }}
     # flang's own driver does independent, GCC-style sysroot/CRT-object
     # discovery at link time (it is a Clang-derived driver, not `zig cc` —
     # zig's bundled-libc trick doesn't apply here). flang.cfg points

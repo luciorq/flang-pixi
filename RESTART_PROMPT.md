@@ -5,22 +5,17 @@ Authoritative detail lives in `docs/10-status-log.md` (newest entry first,
 
 ## Where things stand
 
-- **Release in flight (2026-10-07): the first ALIGNED release — lld-zig 5 /
-  flang-zig 6 / flang-rt-zig 10 on all six subdirs, zig 0.16.0 (zig_impl
-  build 20), LLVM 23.1.1 — is BUILT and post-checked on linux-64,
-  linux-aarch64, osx-arm64, osx-64, win-64 and win-arm64 (done 05:37 EDT;
-  kappa needed a disk cleanup and a re-run of the arm chain). Upload waits for the
-  user's go (commands in docs/14); then `prune-universe.py --apply`,
-  `check-build-alignment.py`, `test.yml`. Until then universe holds the
-  pre-rule spread below.** Build strings: docs/14 table; stage results and
-  the two allowlist corrections the release build forced (sibling
-  libraries; CRYPT32/WINHTTP): docs/10 2026-10-07.
 - **Published and native-tested on all six subdirs** (prefix.dev
-  `universe`, exactly 18 live files, docs/14): LLVM **23.1.1** chains built
-  with conda-forge zig **0.16.0** (builds 17–19; the feedstock is at build
-  20 since 2026-10-03, not yet used). Consumer set = `lld-zig`,
-  `flang-zig`, `flang-rt-zig`; `llvm-zig` is build-time only, never
-  published; the 22.x generation was never published.
+  `universe`, exactly 18 live files, docs/14): the **first ALIGNED release
+  (2026-10-07) — lld-zig `_5`, flang-zig `_6`, flang-rt-zig `_10` on every
+  subdir**, LLVM **23.1.1**, conda-forge zig **0.16.0 build 20**; `test.yml`
+  run 37610086141 green on the six native runners; `check-build-alignment.py`
+  → OK; `prune-universe.py` → delete 0. This is r-zig-pixi's final 0.16
+  set. Consumer set = `lld-zig`, `flang-zig`, `flang-rt-zig`; `llvm-zig`
+  (`_4`) is build-time only, never published; the 22.x generation was never
+  published. What the release carries and the three incidents its build
+  forced (sibling libraries in the allowlist, CRYPT32/WINHTTP on Windows,
+  kappa's disk): docs/10 2026-10-07.
 - **Every published file is libc-only at load time** (measured 2026-10-06,
   docs/18 §6.1): Linux NEEDED = glibc + loader, macOS = `libSystem.B` with
   `minos 11.0`, Windows = OS DLLs + `api-ms-win-crt-*` (all 12 win-64
@@ -40,11 +35,11 @@ Authoritative detail lives in `docs/10-status-log.md` (newest entry first,
   rattler-build **stays 0.76.1**, python 3.14.8, cmake 4.4.4, zig 0.16.0
   build 20 in `zig-probe`; **no `zig_impl_*` 0.17.0 on conda-forge's main
   label** (only `conda-forge/label/zig_dev`).
-- **Build numbers differ per subdir in the 23.1.1 generation** (docs/13 has
-  why): lld `_1/_0/_4/_4/_0/_3`, flang `_2/_1/_5/_5/_1/_4`, flang-rt
-  `_9/_9/_9/_9/_4/_7` for linux-64/linux-aarch64/osx-arm64/osx-64/win-64/
-  win-arm64. `python3 scripts/check-build-alignment.py` verifies the channel
-  against `scripts/build-alignment.json`.
+- **One build number per package on all six subdirs since 2026-10-07**
+  (docs/13 rule; the earlier per-subdir spread and why it existed: docs/13).
+  `python3 scripts/check-build-alignment.py` verifies the channel against
+  `scripts/build-alignment.json` (`release` 5/6/10, `next_release` 6/7/11,
+  llvm-zig 5).
 - **Consumer (r-zig-pixi, branch `feat-no-host-paths`)**: Phase 2 complete
   — R built with flang on every platform; linux-64 uses conda-forge's flang
   by decision, the other four use ours. We own only `§6` and `§7` of its
@@ -152,6 +147,13 @@ NEEDED, no conda-forge wait). flang-rt 10: add `llvm-openmp >=23` on unix.
     PE image" instead (its host env carries MSVC-built `libomp.dll`). The
     same predicates ran over the 18 extracted published packages: zero
     violations (`scripts/check-load-deps.sh`).
+14. **Consumer contract (2026-10-07):** build strings end in `_<N>`;
+    release builds a published r-zig-toolchain pins (`retain` in
+    `build-alignment.json`: lld 5 / flang 6 / flang-rt 10) are never pruned;
+    flang-zig pins its lld-zig by build string from build 7 (`lld_build`
+    recipe context, bump with each release). r-zig-pixi's `atexit`
+    auto-export report: reproduced on upstream 0.16.0 and 0.17.0, parked as
+    docs/12 #7, not filed (rule 10).
 13. **Dependency trims evaluated, recipes unchanged (docs/18 §6.2–§6.5):**
     llvm-zig's optional libraries are all OFF (`LLVMConfig.cmake`: ZLIB 0,
     ZSTD OFF, LIBXML2 OFF, LIBEDIT 0, FFI OFF; TERMINFO no longer exists in
@@ -189,9 +191,9 @@ clean at c2c061f plus the 10-03 RESTART_PROMPT/docs/10 edits).
 
 ## What remains (in order)
 
-0. Finish the 2026-10-07 release: win-arm64 chain → static checks → user's
-   go → upload per host (docs/14) → prune → alignment check → `test.yml`
-   → finalize docs/14 and handoff §9 with the win-arm64 strings.
+0. (done 2026-10-07: release built, uploaded by the user, pruned, aligned,
+   `test.yml` green.) Optional follow-up offered: add r-zig-pixi's win-64
+   Fortran package test to `test.yml`.
 1. zig 0.17 wave when conda-forge's main label has `zig_impl_*` 0.17.0 (or
    the user chooses upstream zig, docs/19 §6): bump the four `variants.yaml`
    pins and the four `number:` fields to 6/7/11 (llvm-zig 5) in one change

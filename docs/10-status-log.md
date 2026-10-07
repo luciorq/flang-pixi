@@ -136,9 +136,26 @@ leftover work tree *before* each build, and re-ran the win-arm64 chain only
 their variant hash inputs did not change on Windows; the build NUMBER is
 what identifies the release.)
 
-**All six subdirs built and checked by 05:40 EDT.** Not yet done: upload (waits for the user's go), then
-`prune-universe.py --apply`, `check-build-alignment.py`, `test.yml` on
-the six runners, docs/14 final table.
+**All six subdirs built and checked by 05:40 EDT. Published by the user
+the same morning:** the 18 files uploaded per host (docs/14 commands),
+`prune-universe.py --apply` (universe = exactly the 18 release files, delete
+0 afterwards), `check-build-alignment.py` → "build alignment OK" at release
+build 5/6/10 with no legacy map, and `test.yml` run **37610086141**
+(2026-10-07 10:53 UTC) **green on all six native runners** — the
+linux-aarch64 and win-arm64 packages, cross-built and only statically
+checked here, ran their smoke/OpenMP/ABI steps there. This is the
+published state; the next release is lld 6 / flang 7 / flang-rt 11.
+**Consumer follow-up (same day):** r-zig-pixi re-locked onto 5/6/10 and
+passes on every OS; a published r-zig-toolchain will pin the exact builds
+(`*_5`/`*_6`/`*_10`; build-number ranges are rejected by pixi/rattler-build
+and `[build_number=…]` brackets by libmamba). Three things followed: a
+`retain` list in `scripts/build-alignment.json` that `prune-universe.py`
+honours (pinned release builds survive the next release); the
+`zig_<hash>_<N>` build-string suffix recorded as a contract; and flang-zig's
+run dep on lld-zig pinned by build string from build 7 on
+(`lld_build` context in its recipe) so a 0.17 lld-zig cannot pair with a
+0.16 flang-zig. Also re-ran r-zig-pixi's `atexit` auto-export repro:
+reproduces on upstream 0.16.0 and 0.17.0, not filed (docs/12 #7).
 
 ## 2026-10-06 (later) — standalone Fortran toolchain proposal from r-zig-pixi: measured on three platforms, docs/19
 

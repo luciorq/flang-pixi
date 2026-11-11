@@ -82,8 +82,10 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 # -exported_symbols_list); on ELF it is equivalent to the version script a
 # consumer would otherwise need. flang-rt has no option for it, so it is set
 # here; compiler-rt's builtins (same runtimes build) already hide theirs.
-export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0 -fvisibility=hidden"
-export CXXFLAGS="-O2 -fPIC -g0 -fvisibility=hidden -fvisibility-inlines-hidden"
+# -mcpu=baseline: the conda wrapper injects it when absent; written out so the
+# scripts also hold with upstream zig (decision 2026-10-10, docs/17 §9).
+export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0 -fvisibility=hidden -mcpu=baseline"
+export CXXFLAGS="-O2 -fPIC -g0 -fvisibility=hidden -fvisibility-inlines-hidden -mcpu=baseline"
 
 MAJOR_VER="${PKG_VERSION%%.*}"
 

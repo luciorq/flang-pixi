@@ -23,10 +23,28 @@ except ImportError:
 OUT, CH = sys.argv[1], sys.argv[2]
 os.makedirs(CH, exist_ok=True)
 
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+replaced = set()
 for f in sorted(os.listdir(OUT)):
-    if f.endswith(".conda") and not os.path.exists(os.path.join(CH, f)):
-        shutil.copy2(os.path.join(OUT, f), os.path.join(CH, f))
-        print("copied", f)
+    if not f.endswith(".conda"):
+        continue
+    src, dst = os.path.join(OUT, f), os.path.join(CH, f)
+    if not os.path.exists(dst):
+        shutil.copy2(src, dst); print("copied", f)
+    elif sha(src) != sha(dst):
+        # Same filename, different content: a rebuild whose variant inputs did
+        # not change (rattler-build hashes spec strings, docs/13). The newer
+        # build wins and its repodata entry is recomputed below. First seen
+        # 2026-10-11: the no-shim win-arm64 rebuild of the 0.17 wave kept the
+        # with-shim packages in the channel because this script only added
+        # missing names.
+        shutil.copy2(src, dst); replaced.add(f); print("replaced", f)
 
 rp = os.path.join(CH, "repodata.json")
 repo = json.load(open(rp)) if os.path.exists(rp) else {
@@ -34,7 +52,7 @@ repo = json.load(open(rp)) if os.path.exists(rp) else {
     "packages.conda": {}, "repodata_version": 2}
 pkgs = repo.setdefault("packages.conda", {})
 
-for fn in [k for k in list(pkgs) if not os.path.exists(os.path.join(CH, k))]:
+for fn in [k for k in list(pkgs) if not os.path.exists(os.path.join(CH, k)) or k in replaced]:
     del pkgs[fn]; print("dropped", fn)
 
 def index_json(path):

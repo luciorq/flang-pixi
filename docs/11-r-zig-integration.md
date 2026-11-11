@@ -193,7 +193,7 @@ links through the *flang driver* inherits all of it; one that links through
 build never puts `kernel32` explicitly ahead of the CRT (r-zig-pixi's
 build.zig has no such line; CMake projects do — docs/10 2026-09-19).
 
-**6. win-arm64 only: `libcompat_arm64.a` exists for the CMake case.**
+**6. win-arm64 only: `libcompat_arm64.a` existed for the CMake case (zig 0.16 releases; gone since the zig 0.17 release of 2026-10-11 — `__C_specific_handler` resolves from the UCRT api set in 0.17, so `flang.cfg` no longer carries `-lcompat_arm64` and flang-rt-zig 11 ships no `libcompat_arm64.a`).**
 `Library/aarch64-w64-mingw32/lib/libcompat_arm64.a` (flang-rt-zig) holds the
 wcstold shim and a one-symbol import library that redirects
 `__C_specific_handler` to `api-ms-win-crt-private-l1-1-0.dll`. Anything

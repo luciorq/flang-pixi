@@ -45,8 +45,10 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
       DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_CPPFLAGS \
       CC CXX AR RANLIB LD NM STRIP 2>/dev/null || true
 
-export CFLAGS="-O2 -fPIC -g0"
-export CXXFLAGS="-O2 -fPIC -g0"
+# -mcpu=baseline: the conda wrapper injects it when absent; written out so the
+# scripts also hold with upstream zig (decision 2026-10-10, docs/17 §9).
+export CFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
+export CXXFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
 
 # llvm-zig lives in $PREFIX (host dep — target-platform archives).
 LLVM_CMAKE="${PREFIX}/lib/cmake/llvm"

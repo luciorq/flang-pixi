@@ -56,8 +56,10 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 # test. This alone does not fully fix flang-zig's package size, since it
 # still statically links llvm-zig's .a archives, which carry their own
 # embedded debug info until llvm-zig itself is rebuilt with this flag too.
-export CFLAGS="-O2 -fPIC -g0"
-export CXXFLAGS="-O2 -fPIC -g0"
+# -mcpu=baseline: the conda wrapper injects it when absent; written out so the
+# scripts also hold with upstream zig (decision 2026-10-10, docs/17 §9).
+export CFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
+export CXXFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
 
 FLANG_PARALLEL_COMPILE_JOBS="${FLANG_PARALLEL_COMPILE_JOBS:-2}"
 

@@ -103,30 +103,8 @@ $mriFile = Join-Path $work 'merge.mri'
 & cmd /c "llvm-ar -M < `"$mriFile`""
 if ($LASTEXITCODE -ne 0) { Write-Error "llvm-ar MRI merge failed"; exit 1 }
 
-# aarch64 CRT gap: zig's aarch64-windows-gnu libs lack wcstold (long double
-# == double on arm64-Windows, so forwarding to wcstod is exactly correct).
-# Bake the shim into the extracted libmsvcrt.a so end-user links get it.
-if ($ZigTarget -like 'aarch64*') {
-    Set-Content -Path "$work\wcstold_compat.c" -Value @(
-        '#include <wchar.h>',
-        'long double wcstold(const wchar_t *n, wchar_t **e) { return (long double)wcstod(n, e); }'
-    )
-    & $env:ZIG_CC --target=$ZigTarget -O2 -c "$work\wcstold_compat.c" -o "$work\wcstold_compat.o"
-    & llvm-ar rs (Join-Path $DestLib 'libmsvcrt.a') "$work\wcstold_compat.o"
-    Write-Host "wcstold shim baked into libmsvcrt.a"
-    # zig's arm64 libkernel32.a wrongly claims KERNEL32.dll exports
-    # __C_specific_handler (true on x64 only; arm64 Windows exports it from the
-    # UCRT's private api set). Any link naming -lkernel32 ahead of the CRT
-    # -- CMake does on every MinGW link line -- imports it from KERNEL32 and
-    # fails to load (0xC0000139). libcompat_arm64.a (flang.cfg: -lcompat_arm64)
-    # is a one-symbol import library for the right DLL; lld keeps the first
-    # definition it sees, so the explicit -l wins. docs/10 2026-09-19.
-    [IO.File]::WriteAllLines("$work\csh_arm64.def", [string[]]@('LIBRARY api-ms-win-crt-private-l1-1-0.dll', 'EXPORTS', '__C_specific_handler'), (New-Object System.Text.UTF8Encoding($false)))
-    $zigExe = Join-Path $env:BUILD_PREFIX 'Library\bin\x86_64-w64-mingw32-zig.exe'
-    & $zigExe dlltool -m arm64 -d "$work\csh_arm64.def" -l (Join-Path $DestLib 'libcompat_arm64.a')
-    if ($LASTEXITCODE -ne 0) { throw "libcompat_arm64.a not created" }
-    Write-Host "__C_specific_handler import redirect archived as libcompat_arm64.a"
-}
+# (zig 0.17: aarch64 wcstold present and __C_specific_handler resolved from the
+# UCRT api set; the 0.16-era shim + libcompat_arm64.a are gone, docs/17 section 9.)
 
 # Empty archives for the legacy names the driver emits.
 foreach ($n in @('libgcc_eh.a', 'libmoldname.a', 'libmingwex.a')) {

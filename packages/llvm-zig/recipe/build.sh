@@ -75,8 +75,10 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 # with -g0 added, nothing else changed. This is why llvm-zig/flang-zig ended
 # up 60-150x larger than conda-forge's llvmdev+clangdev+mlir/flang, which
 # strip (or never emit) debug info by default. See docs/10-status-log.md.
-export CFLAGS="-O2 -fPIC -g0"
-export CXXFLAGS="-O2 -fPIC -g0"
+# -mcpu=baseline: the conda wrapper injects it when absent; written out so the
+# scripts also hold with upstream zig (decision 2026-10-10, docs/17 §9).
+export CFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
+export CXXFLAGS="-O2 -fPIC -g0 -mcpu=baseline"
 
 # --- knobs from the recipe ---------------------------------------------------
 LLVM_PROJECTS="${LLVM_PROJECTS:-clang;mlir}"

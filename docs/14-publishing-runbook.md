@@ -6,7 +6,44 @@ channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: first ALIGNED release PUBLISHED 2026-10-07 — lld-zig 5 / flang-zig 6 / flang-rt-zig 10 on all six subdirs (universe = exactly these 18 files)
+## Status: second aligned release (zig 0.17 wave) PUBLISHED 2026-10-11 — lld-zig 6 / flang-zig 7 / flang-rt-zig 11 on all six subdirs; universe = these 18 files + the 18 RETAINED 0.16 files below
+
+| package 23.1.1 (zig 0.17.0, LLVM 22 inside zig) | release build | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
+|---|---|---|---|---|---|---|---|
+| lld-zig | **6** | `zig_88cbac0_6` | `zig_ea2e60d_6` | `zig_58db1ef_6` | `zig_ca035d8_6` | `zig_10a5536_6` | `zig_279c4b1_6` |
+| flang-zig | **7** | `zig_8dcaa78_7` | `zig_22c055e_7` | `zig_679338f_7` | `zig_6d949fe_7` | `zig_3effd8f_7` | `zig_52d3e10_7` |
+| flang-rt-zig | **11** | `zig_4a37d76_11` | `zig_ea2e60d_11` | `zig_ec1468c_11` | `zig_db81c21_11` | `zig_136e600_11` | `zig_1e4a608_11` |
+
+(win-arm64 strings are the same for the no-shim rebuild: the shims were
+build-script content, not variant inputs.) Retained alongside, never
+pruned while r-zig-toolchain pins them (`retain` in
+`scripts/build-alignment.json`): the first aligned release below.
+
+Uploaded, pruned and tested by the user on 2026-10-11:
+`check-build-alignment.py` → "build alignment OK" (release 6/7/11),
+`prune-universe.py` → keep 18 / retained 18 / delete 0, `test.yml` run
+38144463412 green on all six native runners.
+
+### Upload commands used for the 0.17 release (template for the next one)
+
+```bash
+# gamma
+rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/linux-64/{lld-zig-23.1.1-zig_88cbac0_6,flang-zig-23.1.1-zig_8dcaa78_7,flang-rt-zig-23.1.1-zig_4a37d76_11}.conda \
+  channel/linux-aarch64/{lld-zig-23.1.1-zig_ea2e60d_6,flang-zig-23.1.1-zig_22c055e_7,flang-rt-zig-23.1.1-zig_ea2e60d_11}.conda
+# omicron
+rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/osx-arm64/{lld-zig-23.1.1-zig_58db1ef_6,flang-zig-23.1.1-zig_679338f_7,flang-rt-zig-23.1.1-zig_ec1468c_11}.conda \
+  channel/osx-64/{lld-zig-23.1.1-zig_ca035d8_6,flang-zig-23.1.1-zig_6d949fe_7,flang-rt-zig-23.1.1-zig_db81c21_11}.conda
+# kappa
+rattler-build -v upload prefix --channel universe --skip-existing ^
+  channel\win-64\lld-zig-23.1.1-zig_10a5536_6.conda channel\win-64\flang-zig-23.1.1-zig_3effd8f_7.conda channel\win-64\flang-rt-zig-23.1.1-zig_136e600_11.conda ^
+  channel\win-arm64\lld-zig-23.1.1-zig_279c4b1_6.conda channel\win-arm64\flang-zig-23.1.1-zig_52d3e10_7.conda channel\win-arm64\flang-rt-zig-23.1.1-zig_1e4a608_11.conda
+# then, from gamma: prune must list the 18 retained 0.16 files, alignment must say release 6/7/11
+python3 scripts/prune-universe.py --apply && python3 scripts/check-build-alignment.py && gh workflow run test.yml
+```
+
+## First aligned release PUBLISHED 2026-10-07 — lld-zig 5 / flang-zig 6 / flang-rt-zig 10 on all six subdirs (RETAINED: r-zig-toolchain pins these exact builds)
 
 One line per package, one build number per release (docs/13 rule). Verify
 after upload with `python3 scripts/check-build-alignment.py` (expects the
@@ -42,9 +79,9 @@ Cost: ~6 files / ~0.6 GB kept per retained release on prefix.dev. (3) From
 the next release flang-zig pins its own lld-zig by build string
 (`lld-zig ==23.1.1 *_<lld build>`), so releases cannot mix.
 
-**Next release: lld-zig `_6`, flang-zig `_7`, flang-rt-zig `_11`** (llvm-zig
-`_5`, build-only) — the zig 0.17 wave or the upstream-zig switch (docs/19
-§6). Hotfixes between releases: declare in `scripts/build-alignment.json`
+**Next release after the 0.17 wave: lld-zig `_7`, flang-zig `_8`, flang-rt-zig
+`_12`** (llvm-zig `_6`, build-only) — planned as the upstream-zig switch
+(docs/19 §6). Hotfixes between releases: declare in `scripts/build-alignment.json`
 `hotfixes` and note here.
 
 ### Upload commands used for this release (template for the next one)

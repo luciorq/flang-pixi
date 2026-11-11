@@ -47,27 +47,27 @@ cmake = ">=3.28"
 ninja = "*"
 
 [feature.zig-probe.target.linux-64.dependencies]
-"zig_linux-64" = "0.16.*"
+"zig_linux-64" = "0.17.*"
 "sysroot_linux-64" = "2.28.*"
 
 [feature.zig-probe.target.linux-aarch64.dependencies]
-"zig_linux-aarch64" = "0.16.*"
+"zig_linux-aarch64" = "0.17.*"
 "sysroot_linux-aarch64" = "2.28.*"
 
 [feature.zig-probe.target.osx-64.dependencies]
-"zig_osx-64" = "0.16.*"
+"zig_osx-64" = "0.17.*"
 
 [feature.zig-probe.target.osx-arm64.dependencies]
-"zig_osx-arm64" = "0.16.*"
+"zig_osx-arm64" = "0.17.*"
 
 [feature.zig-probe.target.win-64.dependencies]
-"zig_win-64" = "0.16.*"
+"zig_win-64" = "0.17.*"
 # The win-arm64 cross toolchain is published into the win-64 subdir, so it is
 # installed *here*, on the win-64 host. There is deliberately no
 # [feature.zig-probe.target.win-arm64.dependencies] table: conda-forge ships no
 # zig_win-arm64 for the win-arm64 subdir, so win-arm64 cannot host its own
 # build. See docs/05-platform-matrix.md.
-"zig_win-arm64" = "0.16.*"
+"zig_win-arm64" = "0.17.*"
 
 # Stage 0 tasks live on the feature, so `pixi run probe` automatically selects
 # the `zig-probe` environment (tasks under a plain `[tasks]` table can only run

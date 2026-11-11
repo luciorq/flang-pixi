@@ -71,6 +71,72 @@ ABI probe / CRAN-flang parity checks.
 6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
    unfiled by decision.
 
+## 2026-10-10/11 — zig 0.17 wave built: second aligned release lld-zig 6 / flang-zig 7 / flang-rt-zig 11 on all six subdirs (conda-forge zig 0.17.0); upload pending the user's go
+
+**Decision (user, 2026-10-10):** compiler source = conda-forge `zig_impl_*`
+0.17.0 for this wave, with the build scripts keeping every patch and
+workaround that EITHER source (conda-forge or upstream zig) needs; the
+upstream switch is the release after (lld 7 / flang 8 / flang-rt 12 /
+llvm-zig 6). Step 1 of the plan (what landed, feedstock diff, probes on
+the real package on three hosts) is docs/17 §9.
+
+**Recipe changes for the wave:** `number:` 5/6/7/11; `variants.yaml`
+`zig_compiler_version` 0.17.0 ×4 (feedstock build unpinned); the cross
+build deps `zig_win-64 0.17.*` / `zig_linux-64 0.17.0.*`; flang-zig
+`lld_build` 6 (run dep `lld-zig ==23.1.1 *_6`); `pixi.toml` zig-probe pins
+0.17.*; `build-alignment.json` release 6/7/11, next_release 7/8/12/6,
+`retain` 5/6/10 unchanged; **explicit `-mcpu=baseline` in CFLAGS/CXXFLAGS of
+all eight build scripts** (identical code to what the conda wrapper injects
+— docs/19 §6 — and required once the wrapper is gone); nothing else
+removed. Preflight (publish-preflight skill): credentials valid on all
+three hosts, lock `0dcbdf68` in sync everywhere, rattler-build 0.76.1;
+kappa had 28 GB free → cleared its 34 GB package cache + cached envs → 49.8
+GB; gamma 7.7 TB, omicron 263 GB.
+
+**Builds (every stage passed glibc-ceiling / allowlist / Mach-O-minos /
+hidden-runtime / floor tripwires and its recipe test; zig_impl 0.17.0
+build 1 was resolved on linux-64/osx-* — the feedstock's build 1 landed
+while the chains started — and build 0 on win-64):**
+
+| subdir | host | llvm-zig 5 | lld-zig 6 | flang-zig 7 | flang-rt-zig 11 | post-build checks (docs/19 §2a with the conda zig 0.17.0 binary) |
+|---|---|---|---|---|---|---|
+| linux-64 | gamma | `zig_9b492b6_5` 38 min | `zig_88cbac0_6` 3 min | `zig_8dcaa78_7` 58 min | `zig_4a37d76_11` 3 min | carve → `env -i` compile → zig 0.17 link → hello/modules/omp_lib_use run; `.hidden`; allowlist; GLIBC ceiling 2.17 |
+| linux-aarch64 | gamma cross | `zig_7c19dfe_5` 33 min | `zig_ea2e60d_6` 3 min | `zig_22c055e_7` 58 min | `zig_ea2e60d_11` 3 min | static (floors, allowlist, `.hidden`); native run on the arm runner after upload |
+| osx-arm64 | omicron | `zig_318c1d0_5` 23 min | `zig_58db1ef_6` 2 min | `zig_679338f_7` 28 min | `zig_ec1468c_11` 3 min | carve/compile/link/run OK, libSystem only, minos 11.0, "private external" probe |
+| osx-64 | omicron Rosetta | `zig_eb3c104_5` 39 min | `zig_ca035d8_6` 4 min | `zig_6d949fe_7` 41 min | `zig_db81c21_11` 7 min | same under Rosetta incl. OpenMP against the x86_64 libomp |
+| win-64 | kappa | `zig_fa525d2_5` 89 min | `zig_10a5536_6` ~5 min | `zig_3effd8f_7` ~95 min | `zig_136e600_11` ~5 min | carve/compile (PATH = carved bin)/zig link/run OK; one runtime archive; DLL exports 24 = own, 0 runtime (llvm-readobj) |
+| win-arm64 (with shims) | kappa cross | `zig_c0395dd_5` 87 min | `zig_279c4b1_6` 9 min | `zig_52d3e10_7` 84 min | `zig_1e4a608_11` 6 min | static: floors, allowlist, one archive, machine arm64 — **green on 0.17 with the 0.16 shims still in** |
+| win-arm64 (shims removed) | kappa cross | `zig_c0395dd_5` 85 min | `zig_279c4b1_6` ~10 min | `zig_52d3e10_7` ~80 min | `zig_1e4a608_11` ~10 min | 01:16–04:18; logs show no shim code ran; the packages ship no `wcstold_compat`/`libcompat_arm64.a`, `flang.cfg` = `-fuse-ld=lld` + the intrinsic-modules line only; allowlist 137/142/144 PE files; floors OK; `flang.exe` machine arm64 — **zig 0.17 needs neither shim** |
+
+**Shim removal (2026-10-11, after the with-shims pass):** the aarch64
+`wcstold` shim and the `__C_specific_handler` import redirect
+(`csh_arm64.def` → `libcompat_arm64.a`, `flang.cfg -lcompat_arm64`) were
+removed from the four `build.bat` and `extract-zig-crt.ps1`; llvm-zig's
+cross leg keeps `MLIR_ENABLE_EXECUTION_ENGINE=OFF` (flang never uses it).
+docs/11 item 6 updated. Verified before removal: 0.17 links `wcstold`
+from the UCRT convert api set and `__C_specific_handler` from the private
+api set even with `-lkernel32` ahead (docs/17 §9).
+
+**Fourth operational finding (2026-10-11):** the no-shim rebuild produced
+files with the SAME names as the with-shim ones (shims are build-script
+content, not variant inputs) and `publish-crossbuilt.py` only copied
+*missing* names, so the channel silently kept the with-shim packages
+until the post-build check caught `-lcompat_arm64` in `flang.cfg`. The
+script now replaces a same-name file whose sha256 differs and recomputes
+its repodata entry ("replaced"); re-run on kappa, verified from gamma on
+the fetched files. The win-64 packages were built before the shim removal;
+their content is unaffected (the shim code only ran on the cross leg) but
+their embedded `info/recipe/build.bat` is the pre-removal text.
+
+**Published by the user 2026-10-11:** the 18 files uploaded per host,
+`prune-universe.py --apply` (keep 18 / **retained 18** — the 0.16 set
+r-zig-toolchain pins — / delete 0), `check-build-alignment.py` → "build
+alignment OK" at release 6/7/11, `test.yml` run **38144463412** green on
+all six native runners (the cross-built linux-aarch64 and win-arm64 sets,
+the latter without the shims, ran their smoke/OpenMP/ABI steps there).
+This is the published state; next release = lld 7 / flang 8 / flang-rt 12
+(llvm-zig 6), planned as the upstream-zig switch.
+
 ## 2026-10-07 — first aligned release built: lld-zig 5 / flang-zig 6 / flang-rt-zig 10 on all six subdirs (zig 0.16.0, LLVM 23.1.1); upload pending the user's go
 
 **Decision (user, 2026-10-06 evening):** r-zig-pixi needs a final zig 0.16

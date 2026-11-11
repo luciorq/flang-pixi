@@ -10,7 +10,7 @@ zig_compiler:
 # and our defense is the explicit glibc floor in build.sh plus the build-time
 # ceiling check, not a stale build pin that would also freeze fixes.
 zig_compiler_version:
-  - "0.16.0"
+  - "0.17.0"
 
 # NOTE the shape: `then:` must be a LIST, not a scalar. Writing
 #   - if: linux

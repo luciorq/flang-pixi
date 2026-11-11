@@ -2,15 +2,15 @@
   "_comment": "docs/13 rule (2026-10-06): every published package has ONE build number on all six subdirs. `release` = the number every subdir must carry; `hotfixes` = declared per-subdir rebuilds between releases (also listed in docs/14); `next_release` = the numbers the next release (zig 0.17 wave or upstream-zig switch) will use. `retain` = release builds a published consumer (r-zig-toolchain) pins by exact build number; prune-universe.py never deletes them, even after a newer release (consumer contract, docs/14; r-zig-pixi 2026-10-07).",
   "version": "23.1.1",
   "release": {
-    "lld-zig": 5,
-    "flang-zig": 6,
-    "flang-rt-zig": 10
-  },
-  "next_release": {
     "lld-zig": 6,
     "flang-zig": 7,
-    "flang-rt-zig": 11,
-    "llvm-zig": 5
+    "flang-rt-zig": 11
+  },
+  "next_release": {
+    "lld-zig": 7,
+    "flang-zig": 8,
+    "flang-rt-zig": 12,
+    "llvm-zig": 6
   },
   "hotfixes": [],
   "retain": {

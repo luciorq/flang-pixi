@@ -80,11 +80,22 @@ build:
   #    hidden-visibility CFLAGS/CXXFLAGS on Windows too (parity; docs/19
   #    §5), `llvm-openmp >=23` in run on every subdir (docs/19 §7), and the
   #    four duplicate Windows runtime archives dropped (docs/19 §1).
-  # NEXT: 11 — the zig 0.17 wave (or the upstream-zig switch, docs/19 §6):
-  #    again one number on all six subdirs (lld-zig 6 / flang-zig 7 /
-  #    flang-rt-zig 11 / llvm-zig 5); scripts/build-alignment.json
-  #    `next_release`. Hotfixes between releases: docs/14 + the JSON.
-  number: 10
+  # 11: SECOND ALIGNED RELEASE — the zig 0.17 wave (2026-10-10): all three
+  #    consumer packages on ALL SIX subdirs at one number each (lld-zig 6 /
+  #    flang-zig 7 / flang-rt-zig 11; llvm-zig 5 build-only), built with
+  #    conda-forge zig_impl 0.17.0 (LLVM 22 inside zig; docs/17 §9).
+  #    Decision 2026-10-10: conda-forge zig for this wave, but every patch
+  #    and workaround that EITHER source (conda-forge or upstream zig) needs
+  #    stays in the build scripts: ZIG_LIB_DIR mirror, explicit targets, the
+  #    macOS zig-form triple rewrite, explicit -mcpu=baseline. Dropped after
+  #    win-arm64 was green with them (2026-10-11): the aarch64 wcstold shim
+  #    and libcompat_arm64 (fixed in zig 0.17 for both sources); win-arm64
+  #    rebuilt once more without them. The 0.16 set (lld 5 / flang 6 /
+  #    flang-rt 10) stays on universe: r-zig-toolchain pins it (`retain`).
+  # NEXT: 12 — the release after (lld 7 / flang 8 / flang-rt 12 / llvm-zig 6),
+  #    planned as the upstream-zig switch (docs/19 §6); `next_release` in
+  #    scripts/build-alignment.json.
+  number: 11
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -104,14 +115,14 @@ requirements:
     # --target=aarch64-windows-gnu explicitly.
     - if: target_platform == "win-arm64"
       then:
-        - zig_win-64 0.16.*
+        - zig_win-64 0.17.*
     # linux-aarch64 cross from linux-64: same hosted-cross story as
     # win-arm64 — use the build platform's proven zig; the build scripts'
     # glibc-floor block keys off target_platform and passes
     # --target=aarch64-linux-gnu.<floor> explicitly.
     - if: target_platform == "linux-aarch64" and build_platform == "linux-64"
       then:
-        - zig_linux-64 0.16.0.*
+        - zig_linux-64 0.17.0.*
     - if: target_platform != "win-arm64" and (target_platform != "linux-aarch64" or build_platform == "linux-aarch64")
       then:
         - ${{ compiler('zig') }}

@@ -1,21 +1,27 @@
-# RESTART_PROMPT — state of flang-pixi as of 2026-10-07 (read first in a new session)
+# RESTART_PROMPT — state of flang-pixi as of 2026-10-11 (read first in a new session)
 
 Authoritative detail lives in `docs/10-status-log.md` (newest entry first,
-2026-10-07 at the top) and the numbered docs; this file is the map.
+2026-10-10/11 at the top) and the numbered docs; this file is the map.
 
 ## Where things stand
 
 - **Published and native-tested on all six subdirs** (prefix.dev
-  `universe`, exactly 18 live files, docs/14): the **first ALIGNED release
-  (2026-10-07) — lld-zig `_5`, flang-zig `_6`, flang-rt-zig `_10` on every
-  subdir**, LLVM **23.1.1**, conda-forge zig **0.16.0 build 20**; `test.yml`
-  run 37610086141 green on the six native runners; `check-build-alignment.py`
-  → OK; `prune-universe.py` → delete 0. This is r-zig-pixi's final 0.16
-  set. Consumer set = `lld-zig`, `flang-zig`, `flang-rt-zig`; `llvm-zig`
-  (`_4`) is build-time only, never published; the 22.x generation was never
-  published. What the release carries and the three incidents its build
-  forced (sibling libraries in the allowlist, CRYPT32/WINHTTP on Windows,
-  kappa's disk): docs/10 2026-10-07.
+  `universe`, docs/14): the **second aligned release = zig 0.17 wave
+  (2026-10-11) — lld-zig `_6`, flang-zig `_7`, flang-rt-zig `_11`** on every
+  subdir, LLVM 23.1.1, conda-forge `zig_impl_*` 0.17.0 (LLVM 22 inside zig);
+  `test.yml` run 38144463412 green; alignment OK. Beside it, **retained**:
+  the first aligned release (lld `_5` / flang `_6` / flang-rt `_10`, zig
+  0.16.0) that r-zig-toolchain pins exactly — universe holds 36 files,
+  `prune-universe.py` reports retained 18 / delete 0. `llvm-zig` (`_5`) is
+  build-only, never published. Decision 2026-10-10: conda-forge zig for
+  this wave; the build scripts keep every workaround either source needs
+  (mirror, explicit targets, macOS zig-form rewrite, explicit
+  `-mcpu=baseline`); the aarch64 wcstold/`libcompat_arm64` shims are gone
+  (win-arm64 proven green without them). Next release = lld 7 / flang 8 /
+  flang-rt 12 (llvm-zig 6) = the upstream-zig switch (docs/19 §6).
+  Incidents of the wave (feedstock build 1 landing mid-start,
+  `publish-crossbuilt.py` not replacing same-name rebuilds — fixed): docs/10
+  2026-10-10/11.
 - **Every published file is libc-only at load time** (measured 2026-10-06,
   docs/18 §6.1): Linux NEEDED = glibc + loader, macOS = `libSystem.B` with
   `minos 11.0`, Windows = OS DLLs + `api-ms-win-crt-*` (all 12 win-64
@@ -115,7 +121,8 @@ NEEDED, no conda-forge wait). flang-rt 10: add `llvm-openmp >=23` on unix.
 8. macOS floor through the conda wrapper: only a zig-form triple
    (`aarch64-macos.11.0-none`) carries the version; flang-rt's build.sh
    rewrites CMake's conda triple on the way to the wrapper (docs/16 D4).
-9. zig 0.17 (released 2026-10-03): **wait for a main-label conda-forge
+9. zig 0.17: landed on conda-forge's main label 2026-10-10 and adopted the
+   same day (decision above). History: **wait for a main-label conda-forge
    package** (the `dev` branch publishes snapshots under
    `conda-forge/label/zig_dev` only, same version string), then one
    chain-wide wave on all six subdirs. docs/17 has the full impact
@@ -194,11 +201,13 @@ clean at c2c061f plus the 10-03 RESTART_PROMPT/docs/10 edits).
 0. (done 2026-10-07: release built, uploaded by the user, pruned, aligned,
    `test.yml` green.) Optional follow-up offered: add r-zig-pixi's win-64
    Fortran package test to `test.yml`.
-1. zig 0.17 wave when conda-forge's main label has `zig_impl_*` 0.17.0 (or
-   the user chooses upstream zig, docs/19 §6): bump the four `variants.yaml`
-   pins and the four `number:` fields to 6/7/11 (llvm-zig 5) in one change
-   (floors, tripwires, flang-compile.cfg, OpenMP floor are already in);
-   linux-64 first and read the tripwires;
+1. (published 2026-10-11, see top.) Next release (7/8/12, llvm-zig 6) =
+   the upstream-zig switch (docs/19 §6): sha-pinned tarball per build
+   host, own cc/c++/ar/ranlib/rc shims (`-mcpu=baseline` is already
+   explicit), explicit `ZIG_GLOBAL_CACHE_DIR`, drop `compiler('zig')` and
+   the `zig_compiler*` variant keys, drop the mirror and the macOS
+   conda-triple rewrite, `zig-toolchain.txt` records the tarball sha;
+   consider a native win-arm64 lane (`zig_impl_win-arm64` 0.17.0 exists);
    then the rest; `test.yml`; `check-build-alignment.py` (move
    `next_release` into `release` in `build-alignment.json`); drop
    `wcstold_compat.c` and `csh_arm64.def`/`-lcompat_arm64` after win-arm64

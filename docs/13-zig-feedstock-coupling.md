@@ -206,3 +206,10 @@ block. `scripts/check-build-alignment.py` (reads universe, or
 outside the declared release/hotfix state; until the first aligned release
 it checks the spread above against the `legacy` map in the JSON. Run it
 after every upload, next to `prune-universe.py`.
+
+**Applied:** first aligned release 2026-10-07 (lld 5 / flang 6 / flang-rt
+10, zig 0.16); second aligned release 2026-10-11 (lld 6 / flang 7 /
+flang-rt 11, zig 0.17) — the first version bump of zig under this rule,
+done as one chain-wide wave on all six subdirs as the rule of thumb above
+prescribes. The 0.16 set is retained on the channel for the consumer that
+pins it (`retain` in `scripts/build-alignment.json`).

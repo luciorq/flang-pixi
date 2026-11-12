@@ -20,7 +20,7 @@
 # at runtime — build scripts delete them before packaging.
 
 context:
-  version: "23.1.1"
+  version: "23.1.5"
 
 package:
   name: lld-zig
@@ -28,7 +28,7 @@ package:
 
 source:
   url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
-  sha256: 851b3d701a4fbdd9f69536d4acda578469e810ca7056687d6556443f5fd39557
+  sha256: 70642a7e44e63c0ceff6624e5fd077b87766e4ed0bcd4a3ea8e3ffa3827ba538
 
 build:
   # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
@@ -82,10 +82,16 @@ build:
   #    and libcompat_arm64 (fixed in zig 0.17 for both sources); win-arm64
   #    rebuilt once more without them. The 0.16 set (lld 5 / flang 6 /
   #    flang-rt 10) stays on universe: r-zig-toolchain pins it (`retain`).
-  # NEXT: 7 — the release after (lld 7 / flang 8 / flang-rt 12 / llvm-zig 6),
-  #    planned as the upstream-zig switch (docs/19 §6); `next_release` in
+  # 0: LLVM 23.1.5 generation, THIRD ALIGNED RELEASE (2026-11-11): every
+  #    package on ALL SIX subdirs at 0 (lld-zig / flang-zig / flang-rt-zig /
+  #    llvm-openmp 0; llvm-zig 0 build-only), conda-forge zig 0.17.0.
+  #    Adds the channel's own libomp (llvm-openmp, zig_* builds, a second output of
+  #    the flang-rt-zig recipe; docs/18 §5, docs/10 2026-11-11). The 23.1.1
+  #    releases stay on universe while consumers pin them (`retain` in
+  #    scripts/build-alignment.json, now per version).
+  # NEXT: 1 — the upstream-zig switch (docs/19 §6); `next_release` in
   #    scripts/build-alignment.json.
-  number: 6
+  number: 0
   string: zig_${{ hash }}_${{ build_number }}
   script:
     file: build
@@ -162,6 +168,15 @@ requirements:
       # package's depends. Meaningless for MinGW targets.
       - vc
       - vc14_runtime
+      # conda-forge's zig compiler packages run-export their C++ runtime since
+      # zig 0.17.0 build 6 (2026-11): libcxx >=22 on osx; libstdcxx + libgcc
+      # (>=15 linux, >=16.2 win). Our binaries link zig's static libc++ (ZIG_LIB_DIR
+      # mirror, docs/16) and the load-dep tripwire proves they need neither;
+      # the 23.1.5 builds first picked these up (docs/10 2026-11-11), and on
+      # osx the shared libc++ in the host prefix tripped that tripwire.
+      - libcxx
+      - libstdcxx
+      - libgcc
 
 tests:
   - script:

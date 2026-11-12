@@ -56,11 +56,9 @@ ABI probe / CRAN-flang parity checks.
    `check-build-alignment.py` with `release` set, drop the aarch64 shims
    (`wcstold_compat.c`, `csh_arm64.def`/`-lcompat_arm64`) once win-arm64 is
    green, consider a native win-arm64 lane. docs/17, docs/18 §6.
-2. **libomp decision** (docs/18 §5): answer the eight checks (symbol-version
-   parity, no C++ surface, Windows import libs, file-list parity, the
-   `_openmp_mutex` convention, r-zig-pixi's macOS openblas builds, build
-   mechanics, wave coupling); the user decides. Until then decision 4
-   stands: conda-forge `llvm-openmp`, no libomp build.
+2. **libomp: DECIDED 2026-11-11** — `llvm-openmp` (conda-forge's name, `zig_*` builds), an output of the
+   flang-rt-zig recipe, in the LLVM 23.1.5 release (entry 2026-11-11,
+   docs/18 §5.4). r-zig-pixi switches its pins in the same release.
 3. **r-zig-pixi** (user's track): re-lock to flang-rt ≥ 9; optionally move
    linux-64 from conda-forge's flang to flang-zig so all six subdirs share
    the static hidden runtime and `omp_lib`; prepare build.zig for 0.17
@@ -70,6 +68,192 @@ ABI probe / CRAN-flang parity checks.
 5. **First GHA `build.yml` run** (census) — still unrun.
 6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
    unfiled by decision.
+
+## 2026-11-11 — LLVM 23.1.5 and the channel's own libomp (llvm-openmp, zig_* builds): third aligned release, all at build 0 — IN PROGRESS
+
+**Why.** r-zig-pixi's windows-11-arm leg (its PR #48) crashed in data.table's
+grouped sum and `forderv` with an access violation (`ldr w0,[x11]`, x11=0)
+called from `libomp!__kmp_invoke_microtask+0xcc`. conda-forge's win-arm64
+`llvm-openmp` 23.1.5 (`hef4af3d_0`, MSVC toolchain) compiles libomp's C
+fallback of `__kmp_invoke_microtask` (`z_Windows_NT-586_util.cpp`, `#if
+KMP_ARCH_AARCH64 && KMP_COMPILER_MSVC`), whose argc > 6 path stores the extra
+arguments into an `alloca` buffer the optimiser drops: the disassembly loads
+x2–x7 and calls `blr x8`, so microtask arguments 7 and up are garbage. Any
+parallel region sharing more than six variables breaks; win-64 (MASM) is
+unaffected. The user chose (r-zig-pixi menu, 2026-11-11) the channel-owned
+libomp of docs/18 §5 as an output of this project, and a version bump of the
+whole project.
+
+**Prototype (gamma, zig 0.17.0, LLVM 23.1.1 `openmp/` via `runtimes/`):**
+- LLVM 23 removed the standalone libomp build (`cmake openmp/` errors "The
+  legacy standalone build mode has been removed"): libomp builds only through
+  `runtimes/ -DLLVM_ENABLE_RUNTIMES=openmp`, i.e. naturally inside
+  flang-rt-zig's existing runtimes build.
+- aarch64-windows-gnu: CMake picks `z_Linux_asm.S` for Windows ARM64 unless
+  MSVC; the assembled `__kmp_invoke_microtask` copies arguments 7+ to the
+  stack (`ldr x12,[x10,#8]!; str x12,[x11],#8` loop) before `blr x8`.
+- Exports vs conda-forge 23.1.5: **win-64 787 = 787, win-arm64 675 = 675,
+  same names.** linux-64 1,202 vs 1,385 and linux-aarch64 1,092 vs 1,173:
+  the difference is exactly the quad-precision atomics
+  (`__kmpc_atomic_*cmplx16*`, `*_fp`), enabled by `kmp_os.h` only for GCC
+  and Intel compilers (`KMP_HAVE_QUAD`; conda-forge builds Linux libomp
+  with GCC 15) and called only by Intel compilers. Symbol-version nodes
+  match exactly (OMP_1.0 … OMP_6.0, GOMP_1.0 … GOMP_5.0.1, VERSION).
+- Load-time dependencies: Linux `libc/libpthread/libdl/librt` (+ loader),
+  GLIBC ceiling 2.17, no C++ exports; Windows `KERNEL32` + UCRT api-sets
+  (conda-forge's also needs `VCRUNTIME140` and `PSAPI`).
+- x64 Windows needs a MASM for `z_Windows_NT-586_asm.asm`: llvm-zig's
+  `llvm-ml64` (`-DCMAKE_ASM_MASM_COMPILER`). macOS cannot be cross-built
+  from Linux (zig ships no `sys/syscall.h` for macOS): built natively on
+  omicron.
+- openmp's runtimes build compiles `omp_lib.mod` / `omp_lib_kinds.mod` /
+  `omp_lib.h` with the Fortran compiler into the same resource module dir as
+  flang-rt's intrinsic modules (`openmp/module`, `flang_module_target`), with
+  libomp's real version values: the hand compile of `omp_lib.F90.var` goes.
+
+**Changed:**
+- All four recipes: LLVM **23.1.5** (`sha256 70642a7e…ba538`, tag tarball),
+  build numbers back to **0** (third aligned release; docs/13).
+- `packages/flang-rt-zig/recipe/recipe.yaml`: multi-output — one `staging`
+  build (`flang-rt-zig-build`), outputs **`llvm-openmp`** (libomp; first
+  built as `llvm-openmp-zig`, renamed the same day, see "Package name"
+  below;
+  headers, Windows import libraries under the MinGW and conda-forge's MSVC
+  names; `run_constraints: intel-openmp <0.0a0`; run export
+  `llvm-openmp >=23.1.5`) and **`flang-rt-zig`** (everything else; run:
+  `llvm-openmp >=23.1.5` — a floor, not an exact pin: with conda-forge
+  listed first, strict priority hides our same-named build and an exact pin
+  would make flang-rt-zig uninstallable; with universe first the solver
+  takes ours).
+  New test `omp_many_args.f90` (a parallel region sharing ten variables;
+  also in `tests/openmp/` for `ci-omp.sh`).
+- `build.sh` / `build.bat`: `openmp` in `LLVM_ENABLE_RUNTIMES`;
+  `LIBOMP_CXXFLAGS=-fvisibility=default` (flang-rt's global
+  `-fvisibility=hidden` would empty libomp's export table on macOS and make
+  the Linux version script export nothing); `OPENMP_INSTALL_LIBDIR=lib`;
+  OMPT tools / OMPD / libomptarget / hwloc off; `LIBOMP_INSTALL_ALIASES=OFF`
+  plus a hand-made `lib/libiomp5.so` (upstream's aliases include a
+  `libgomp.so` that would shadow GCC's); Windows `llvm-ml64`, conda-forge's
+  `.lib` names, the import library also in the MinGW CRT dir for the flang
+  driver; dropped: the `omp_lib` hand compile, `pe-exports.py` + dlltool shim,
+  the `llvm-openmp` host dependency. Tripwires: libomp version nodes / API
+  exports / no C++ exports (unix), install name `@rpath/libomp.dylib`
+  (macOS), import allowlist via `check-imports.ps1` + API exports (Windows),
+  GLIBC ceiling also on `libomp.so`.
+- `scripts/build-alignment.json`: version 23.1.5, release 0 for lld-zig /
+  flang-zig / flang-rt-zig / llvm-openmp; **`retain` keyed by version**
+  (`{"23.1.1": {lld-zig: [5, 6], flang-zig: [6, 7], flang-rt-zig: [10, 11]}}`)
+  — `prune-universe.py` deleted every file of another version before, which
+  would have removed the 23.1.1 builds r-zig-toolchain and r-zig-pixi's lock
+  pin. `prune-universe.py` reads the version from that file by default.
+- `check-build-alignment.py`, `prune-universe.py`, `stage-release.sh`,
+  `test.yml`, `build.yml`: llvm-openmp in the consumer set; `rb-stage.sh`
+  / `.bat` run `check-stdlib-floor.py` on both outputs; `ci-omp.sh` fails
+  when conda-forge's `llvm-openmp` is in the environment.
+- Everything else bumped (user, 2026-11-11: "bump all packages", "CI
+  actions", "pixi version in CI"): `pixi update` of the whole lock with
+  `rattler-build >=0.80` (0.76.1 → 0.80.0; also cmake 4.4.5, python
+  3.15.2; the zig-probe env's zig_impl 0.17.0 build 0 → 6). All four
+  recipes render on all six targets with 0.80.0. Every host builds through
+  `pixi run` so the published packages come from the locked rattler-build
+  (gamma's llvm-zig, build-only and never published, was already running on
+  0.76.1). CI: `prefix-dev/setup-pixi` v0.11.0 → v0.11.3 with
+  `pixi-version: v0.84.2` (the pixi that wrote the lock; CI took "latest"
+  before), `actions/checkout` v7.0.1, `download-artifact` v8.0.2,
+  `upload-artifact` v7.0.2. zig itself is unchanged: conda-forge's newest
+  is 0.17.0.
+- omicron: the first scratch llvm-zig builds failed resolving or
+  downloading (`host` resolved conda.anaconda.org, curl and rattler-build
+  could not). Cause: omicron's application firewall, LuLu 4.3.1, which
+  keys rules by program path, so a new environment's rattler-build is a
+  new, unapproved program. The user updated LuLu (4.5.7) and added rules
+  for `~/.pixi`; omicron builds again (global rattler-build pinned to the
+  lock's 0.80.0).
+
+- **Leaked C++ runtime run exports (found by the builds, fixed):**
+  conda-forge's zig compiler packages 0.17.0 **build 6** (the October wave
+  used build 0) run-export their C++ runtime: `libcxx >=22` (osx),
+  `libstdcxx >=15` + `libgcc >=15` (linux), `libstdcxx >=16.2` +
+  `libgcc >=16.2` (win, strong). The first 23.1.5 llvm-zig / lld-zig
+  linux-64 packages declared `libstdcxx` and `libgcc` (23.1.1 build 6:
+  `__glibc` only), and on omicron conda-forge's shared libc++ landed in
+  the host prefix and tripped the load-dep tripwire
+  (`$PREFIX/lib/libc++.1.0.dylib loads /usr/lib/libc++abi.dylib`). All
+  four recipes now list `libcxx`, `libstdcxx`, `libgcc` under
+  `ignore_run_exports: by_name` (binaries link zig's static libc++; the
+  tripwire proves they need neither), and `check-stdlib-floor.py` fails any
+  package that depends on a C++/GCC/MSVC runtime. Every host restarted from
+  llvm-zig.
+
+- **Package name (user decision 2026-11-11, option A of three): `llvm-openmp`,**
+  conda-forge's name, with `zig_*` build strings, not `llvm-openmp-zig`.
+  Under a different name with `llvm-openmp <0.0a0` (as first built) every
+  environment that also wants a conda-forge package depending on
+  `llvm-openmp` by name is unsolvable — in r-zig-pixi's lock: fftw,
+  muparser and `libopenblas openmp_*` on macOS, mkl on win-64 (the
+  `stress` environment); without the constraint both packages install the
+  same files. Under the same name, a channel listed before conda-forge
+  (strict priority, pixi's default) supplies the `llvm-openmp` every
+  package gets. Consequences accepted: (1) channel order is part of the fix
+  — with conda-forge first, its libomp wins silently; (2) the channel must
+  follow conda-forge's libomp majors (packages built against
+  `llvm-openmp` 24 will require `>=24`); (3) environments that add
+  universe get our libomp for all packages (ABI-compatible; omits
+  libompd/libarcher, the GCC-only quad atomics on Linux, and the Windows
+  `lib/clang/{18,19,20}/include/omp.h` copies); (4) an exception to docs/11
+  item 4's "no conda-forge names" rule, for the runtime only. Recipe:
+  the output is `llvm-openmp`, `run_exports: strong: llvm-openmp
+  >=23.1.5` like conda-forge's (its Linux `_openmp_mutex * *_llvm` export
+  is not copied), `intel-openmp <0.0a0` + `openmp ==23.1.5|23.1.5.*` kept.
+  `ci-omp.sh` now fails unless the installed `llvm-openmp` is a `zig_*`
+  build. flang-rt-zig linux-64 rebuilt after the rename.
+
+**Builds (scratch copies, never the hosts' own checkouts):** gamma
+`RB_OUT=/data/gamma/luciorq/workspaces/temp/r-zig-pixi/fp-rb` (linux-64,
+linux-aarch64 cross); kappa `C:\Users\admin\rz-fp-2315\` (win-64, win-arm64
+cross); omicron `~/rz-fp-2315/` (osx-arm64, osx-64 under Rosetta). Results
+below as they land.
+
+**linux-64 (gamma, 2026-11-11 18:27–20:04, rattler-build 0.80.0):**
+llvm-zig, lld-zig, flang-zig and flang-rt-zig `_0` built. flang-rt-zig's
+first multi-output build stopped at `PKG_VERSION: unbound variable`:
+rattler-build gives a staging output no `PKG_*` variables (docs/16 §3c
+already noted it from the consumer side), so the recipe passes the LLVM
+major as `FLANG_RT_MAJOR` in the staging script's `env:`. Then:
+
+| check | result |
+|---|---|
+| runtimes configure with `openmp` | OK; only `OPENMP_ENABLE_TESTING` reported unused |
+| `omp_lib.mod` / `omp_lib_kinds.mod` / `omp_lib.h` from openmp/module | present under `finclude/flang/x86_64-conda-linux-gnu` |
+| glibc ceiling, `libomp.so` | 2.17 |
+| load-dep allowlist | 131 ELF files, glibc + loader only |
+| libomp tripwire | 1,180 exported functions, version nodes and API present, 0 C++ exports |
+| flang-rt-zig tests | hello, modules, omp_directives, omp_lib_use, **omp_many_args (4 threads)** pass |
+| `check-stdlib-floor.py` | flang-rt-zig `[llvm-openmp-zig ==23.1.5 zig_4a37d76_0, __glibc >=2.17]`; llvm-openmp-zig `[__glibc >=2.17]` |
+| llvm-openmp-zig contents | `lib/libomp.so`, `lib/libiomp5.so → libomp.so`, `include/{omp,ompx,omp-tools,ompt}.h` (6 files) |
+| flang-rt-zig contents | 64 files: 23.1.1 build 11's 63 + `omp_many_args.f90` |
+
+**After the rename (`llvm-openmp`, zig_* builds) — all four unix subdirs:**
+
+| subdir (host) | libomp exports (conda-forge 23.1.5) | tests | `check-stdlib-floor.py` |
+|---|---|---|---|
+| linux-64 (gamma) | 1,180 functions, version nodes OK | pass, omp_many_args 4 threads | flang-rt-zig `[llvm-openmp >=23.1.5, __glibc >=2.17]`; llvm-openmp `[__glibc >=2.17]` |
+| linux-aarch64 (gamma, cross) | 1,070 functions, version nodes OK | skipped (cross; GHA arm runner in test.yml) | same |
+| osx-arm64 (omicron) | 1,649 (1,648), no `___dso_handle` | pass, omp_many_args 4 threads | flang-rt-zig `[llvm-openmp >=23.1.5, __osx >=11.0]`; llvm-openmp `[__osx >=11.0]` |
+| osx-64 (omicron, Rosetta) | 1,768 (1,767) | pass, omp_many_args 4 threads | same |
+
+macOS libomp: zig's own Mach-O linker exports `___dso_handle` from every
+dylib (measured on omicron); `-fuse-ld=lld -L$SDK/usr/lib` keeps it private
+(`ld64.lld` alone finds no libSystem), minos 11.0, libSystem only; the
+tripwire and the Apple-ld `flang -fopenmp` tests confirm it.
+
+**Solve test for the name (local channel first, then conda-forge):**
+linux-64 / linux-aarch64 with flang-zig + flang-rt-zig + `_openmp_mutex
+*_llvm`, and osx-arm64 / osx-64 adding conda-forge's fftw, muparser and
+`libopenblas openmp_*`: all solve, every `llvm-openmp` is ours
+(`zig_*`). Installed on omicron, conda-forge's `libfftw3_omp.dylib` loads
+`@rpath/libomp.dylib`, i.e. our build. Under the old name with
+`llvm-openmp <0.0a0` the macOS set was unsolvable.
 
 ## 2026-10-10/11 — zig 0.17 wave built: second aligned release lld-zig 6 / flang-zig 7 / flang-rt-zig 11 on all six subdirs (conda-forge zig 0.17.0); upload pending the user's go
 

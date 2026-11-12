@@ -3,8 +3,41 @@
 Decisions made (2026-09-05, user): publish to the existing **`universe`**
 channel on prefix.dev (the same one r-zig-pixi publishes R packages to),
 **consumer set only** — `lld-zig` + `flang-zig` + `flang-rt-zig` per
-platform (~0.1–0.7 GB each). `llvm-zig` stays in the local file:// channels;
+platform (~0.1–0.7 GB each), plus `llvm-openmp` (`zig_*` builds) since
+23.1.5 (docs/18 §5.4). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
+
+## Next: third aligned release — LLVM 23.1.5, build 0, with `llvm-openmp` — built 2026-11-11, upload pending
+
+| package 23.1.5 (zig 0.17.0) | release build | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
+|---|---|---|---|---|---|---|---|
+| lld-zig | **0** | `zig_88cbac0_0` | `zig_ea2e60d_0` | `zig_58db1ef_0` | `zig_ca035d8_0` | `zig_10a5536_0` | `zig_279c4b1_0` |
+| flang-zig | **0** | `zig_8dcaa78_0` | `zig_22c055e_0` | `zig_679338f_0` | `zig_6d949fe_0` | `zig_3effd8f_0` | `zig_52d3e10_0` |
+| flang-rt-zig | **0** | `zig_4a37d76_0` | `zig_ea2e60d_0` | `zig_ec1468c_0` | `zig_db81c21_0` | `zig_136e600_0` | `zig_1e4a608_0` |
+| llvm-openmp | **0** | `zig_4a37d76_0` | `zig_ea2e60d_0` | `zig_ec1468c_0` | `zig_db81c21_0` | `zig_136e600_0` | `zig_1e4a608_0` |
+
+Retained beside it (`retain` in `scripts/build-alignment.json`): the 36
+23.1.1 files of the first and second aligned releases below. Prune dry run
+before upload (2026-11-12): keep 0 / retained 36 / delete 0.
+
+### Upload commands (each host uploads its own subdirs; kappa uploads its own, see Cautions)
+
+```bash
+# gamma (~/projects/flang-pixi)
+rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/linux-64/{lld-zig-23.1.5-zig_88cbac0_0,flang-zig-23.1.5-zig_8dcaa78_0,flang-rt-zig-23.1.5-zig_4a37d76_0,llvm-openmp-23.1.5-zig_4a37d76_0}.conda \
+  channel/linux-aarch64/{lld-zig-23.1.5-zig_ea2e60d_0,flang-zig-23.1.5-zig_22c055e_0,flang-rt-zig-23.1.5-zig_ea2e60d_0,llvm-openmp-23.1.5-zig_ea2e60d_0}.conda
+# omicron (~/rz-fp-2315/flang-pixi; binary ~/.pixi/bin/rattler-build)
+~/.pixi/bin/rattler-build -v upload prefix --channel universe --skip-existing \
+  channel/osx-arm64/{lld-zig-23.1.5-zig_58db1ef_0,flang-zig-23.1.5-zig_679338f_0,flang-rt-zig-23.1.5-zig_ec1468c_0,llvm-openmp-23.1.5-zig_ec1468c_0}.conda \
+  channel/osx-64/{lld-zig-23.1.5-zig_ca035d8_0,flang-zig-23.1.5-zig_6d949fe_0,flang-rt-zig-23.1.5-zig_db81c21_0,llvm-openmp-23.1.5-zig_db81c21_0}.conda
+# kappa (C:\Users\admin\rz-fp-2315\flang-pixi; binary C:\Users\admin\.pixi\bin\rattler-build.exe)
+rattler-build -v upload prefix --channel universe --skip-existing ^
+  channel\win-64\lld-zig-23.1.5-zig_10a5536_0.conda channel\win-64\flang-zig-23.1.5-zig_3effd8f_0.conda channel\win-64\flang-rt-zig-23.1.5-zig_136e600_0.conda channel\win-64\llvm-openmp-23.1.5-zig_136e600_0.conda ^
+  channel\win-arm64\lld-zig-23.1.5-zig_279c4b1_0.conda channel\win-arm64\flang-zig-23.1.5-zig_52d3e10_0.conda channel\win-arm64\flang-rt-zig-23.1.5-zig_1e4a608_0.conda channel\win-arm64\llvm-openmp-23.1.5-zig_1e4a608_0.conda
+# then, from gamma: prune keeps 24 / retains 36 / deletes 0; alignment says release 0/0/0/0
+python3 scripts/prune-universe.py --apply && python3 scripts/check-build-alignment.py && gh workflow run test.yml
+```
 
 ## Status: second aligned release (zig 0.17 wave) PUBLISHED 2026-10-11 — lld-zig 6 / flang-zig 7 / flang-rt-zig 11 on all six subdirs; universe = these 18 files + the 18 RETAINED 0.16 files below
 

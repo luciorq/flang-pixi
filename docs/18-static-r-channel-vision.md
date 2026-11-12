@@ -212,9 +212,62 @@ packages).
    same-number release (§docs/13 rule); the alternative is a release of its
    own right after.
 
-**Decision: unchanged** — flang-rt-zig keeps `llvm-openmp` (conda-forge) as
+**Decision until 2026-11-11 (superseded by §5.4):** — flang-rt-zig keeps `llvm-openmp` (conda-forge) as
 its run dependency and no libomp is built, until the user confirms the
 drop-in after items 1–8 are answered.
+
+### 5.4 Decision (2026-11-11): build libomp — `llvm-openmp` (`zig_*` builds), an output of the flang-rt-zig recipe
+
+Trigger: conda-forge's win-arm64 libomp drops microtask arguments after
+the sixth (docs/10 2026-11-11), which crashed data.table on r-zig-pixi's
+windows-11-arm runner. The user chose the channel-owned libomp, built in
+flang-rt-zig's runtimes build (LLVM 23 builds libomp only through
+`runtimes/`), published as a second output, with r-zig-pixi switching in
+the same release. **Name: `llvm-openmp`, not `llvm-openmp-zig`** (user, 2026-11-11): a
+different name needs `llvm-openmp <0.0a0` to keep the two packages' shared
+files apart, and then every conda-forge package that depends on
+`llvm-openmp` by name (macOS fftw, muparser, openblas `openmp_*`; win-64
+mkl) cannot share an environment with the toolchain. Under conda-forge's
+name a channel listed before conda-forge supplies the one `llvm-openmp`
+every package gets; the price is that channel order is part of the fix and
+the channel must keep up with conda-forge's libomp majors (docs/10
+2026-11-11, "Package name"). An exception to docs/11 item 4 for the
+runtime only. Answers to §5.3, from the 2026-11-11 prototype and the
+release build's tripwires:
+
+1. **Export and symbol-version parity:** Windows identical (787 / 675 names);
+   Linux identical version nodes, minus the quad-precision atomics that
+   libomp enables only for GCC/Intel builds (callers: Intel compilers
+   only). macOS: checked by the build tripwire (API present, install name
+   `@rpath/libomp.dylib`); counts recorded with the build.
+2. **No C++ runtime surface:** tripwire, 0 C++ exports (unix); libomp built
+   with default visibility via `LIBOMP_CXXFLAGS` (flang-rt keeps hidden).
+3. **Windows import libraries:** the build's MinGW `libomp.dll.a`, copied
+   to conda-forge's `libomp.lib` / `libiomp5md.lib` names (lld reads either;
+   r-zig-pixi links `Library/lib/libomp.lib`) and into the MinGW CRT dir
+   for the flang driver; `libiomp5md.dll` kept (upstream's alias).
+4. **File list:** conda-forge's minus `libompd`, `libarcher*` and
+   `ompt-multiplex.h` (OMPD / OMPT tools off; R uses none), and on Windows
+   minus the `Library/lib/clang/{18,19,20}/include/omp.h` copies (for
+   conda-forge's clang/clang-cl 18–20 without `-I%LIBRARY_INC%`; r-zig-pixi
+   reads `Library/include`); the `libiomp5` alias kept (`lib/libiomp5.so`,
+   `lib/libiomp5.dylib`, `libiomp5md.dll`/`.lib`); no `libgomp` alias.
+5. **`_openmp_mutex`:** no channel variant. The package keeps
+   conda-forge's name (`llvm-openmp`), so conda-forge's `*_llvm` mutex
+   (which depends on `llvm-openmp`) installs with ours; our run export
+   does not force it (conda-forge's Linux package exports `_openmp_mutex *
+   *_llvm`, ours does not).
+6. **r-zig-pixi:** keeps the name `llvm-openmp`, pins the `zig_*` build
+   (`llvm-openmp = { version = "23.1.5.*", build = "zig_*" }` or the
+   channel order alone), and lists universe before conda-forge; its macOS
+   openblas environments keep conda-forge's `openmp_*` builds, which now
+   take our libomp.
+7. **Build mechanics:** not a fifth recipe — the existing runtimes build
+   plus a staging output; x64 Windows uses llvm-zig's `llvm-ml64` for
+   libomp's MASM file.
+8. **Coupling:** shipped with the LLVM 23.1.5 bump as the third aligned
+   release (every package at build 0); the upstream-zig switch moves to
+   build 1.
 
 ## 6. Revisit (b): dependency trims for flang-pixi — verified with the published files
 

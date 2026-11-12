@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # OpenMP check on the target's own hardware: install flang-zig + flang-rt-zig
-# (which pulls conda-forge's llvm-openmp) from <channel>, compile
+# (which pulls llvm-openmp, the channel's own zig-built libomp from the same
+# recipe, since 23.1.5 build 0) from <channel>, compile
 # tests/openmp/*.f90 with -fopenmp and run them with several threads.
 # Covers: `!$omp` directives → libomp (all platforms), `use omp_lib` (the
 # module flang-rt-zig ships), and on Windows the -lomp/-latomic resolution
@@ -21,6 +22,9 @@ pixi init . >/dev/null
 pixi workspace channel add "$chan_url" --prepend
 pixi add "flang-zig$pin" "flang-rt-zig$pin"
 pixi list | grep -E "flang-rt-zig|llvm-openmp" || true
+# The libomp must be ours (llvm-openmp, a zig_* build), not conda-forge's
+# same-named package: the channel order decides (docs/18 §5.4).
+if ! pixi list | awk '$1 == "llvm-openmp" && $3 ~ /^zig_/ {f=1} END {exit !f}'; then echo "llvm-openmp is not the channel's zig_* build"; pixi list | grep llvm-openmp; exit 1; fi
 fail=0
 for f in "$root"/tests/openmp/*.f90; do
   n="$(basename "$f" .f90)"

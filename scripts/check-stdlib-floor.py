@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail if a built .conda declares a C-stdlib floor above what the recipe's
-variants.yaml promises (docs/10 2026-09-18: packages built through pixi
+variants.yaml promises, or depends on a C++/GCC/MSVC runtime (docs/10 2026-09-18: packages built through pixi
 without variants carried `__glibc >=2.28` / `sysroot_linux-64 >=2.28` /
 `__osx >=13.0` although the recipe says 2.17 / 11.0 — uninstallable on the
 old servers this project targets, and invisible until someone tried).
@@ -64,6 +64,14 @@ def main():
         # the 2026-10-06 release).
         if fam in ("linux", "osx") and floor and not seen_virtual:
             problems.append(f"no {'__glibc' if fam == 'linux' else '__osx'} floor declared (expected >= {floor})")
+        # No C++ / GCC / MSVC runtime in run (docs/18 §6.6): every binary links
+        # zig's static libc++, so such a dependency is a leaked run export
+        # (conda-forge zig 0.17.0 build 6 added libcxx / libstdcxx + libgcc,
+        # first seen on the 23.1.5 builds, docs/10 2026-11-11).
+        for d in deps:
+            name = d.split()[0]
+            if name in ("libcxx", "libstdcxx", "libstdcxx-ng", "libgcc", "libgcc-ng", "libgomp", "vc", "vc14_runtime", "ucrt", "vs2015_runtime"):
+                problems.append(f"{d!r}: a C++/GCC/MSVC runtime dependency (leaked run export?)")
         status = "OK" if not problems else "FAIL"
         print(f"stdlib floor {status}: {f.split('/')[-1]} [{subdir}] floor={floor} depends={deps}")
         for p in problems:

@@ -9,7 +9,7 @@
 #   <channel>  a local directory in rattler-build output layout
 #              (<dir>/<subdir>/*.conda + repodata.json) or a channel URL
 #              such as https://prefix.dev/universe
-#   [version]  pin, e.g. 23.1.1 (default: unpinned)
+#   [version]  pin, e.g. 23.1.5 (default: unpinned)
 set -euo pipefail
 src="$1"; ver="${2:-}"
 root="$(cd "$(dirname "$0")/.." && pwd)"

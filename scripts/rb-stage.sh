@@ -36,7 +36,10 @@ rattler-build build \
 # Tripwire: the package must not declare a C-stdlib floor above the recipe's
 # c_stdlib_version (the class of defect the pixi-publish path shipped).
 built=$(ls -t "$out/$target"/${pkg}-*.conda | head -1)
-pixi exec --spec "python>=3.14" --spec pyyaml python "$root/scripts/check-stdlib-floor.py" "$root/packages/$pkg/recipe/variants.yaml" "$built"
+# flang-rt-zig's recipe has a second output since 23.1.5 build 0: libomp.
+[[ "$pkg" == flang-rt-zig ]] && built="$built $(ls -t "$out/$target"/llvm-openmp-[0-9]*.conda | head -1)"
+# shellcheck disable=SC2086
+pixi exec --spec "python>=3.14" --spec pyyaml python "$root/scripts/check-stdlib-floor.py" "$root/packages/$pkg/recipe/variants.yaml" $built
 pixi exec --spec "python>=3.14" python "$root/scripts/publish-crossbuilt.py" "$out/$target" "$root/channel/$target"
 # Keep src_cache: it holds the ~200 MB LLVM tarball every stage re-fetches
 # otherwise (a transient GitHub error killed an omicron chain at stage 2 on

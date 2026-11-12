@@ -30,7 +30,10 @@ if errorlevel 1 exit /b 1
 REM tripwire: no C-stdlib floor above the recipe's c_stdlib_version
 for /f "delims=" %%F in ('dir /b /o-d "%RB_OUT%\%TARGET%\%PKG%-*.conda"') do ( set "BUILT=%RB_OUT%\%TARGET%\%%F" & goto :gotbuilt )
 :gotbuilt
-pixi exec --spec "python>=3.14" --spec pyyaml python "%ROOT%\scripts\check-stdlib-floor.py" "%ROOT%\packages\%PKG%\recipe\variants.yaml" "!BUILT!"
+REM flang-rt-zig's recipe has a second output since 23.1.5 build 0: libomp.
+set "BUILT_OMP="
+if "%PKG%"=="flang-rt-zig" for /f "delims=" %%F in ('dir /b /o-d "%RB_OUT%\%TARGET%\llvm-openmp-2*.conda"') do if not defined BUILT_OMP set "BUILT_OMP="%RB_OUT%\%TARGET%\%%F""
+pixi exec --spec "python>=3.14" --spec pyyaml python "%ROOT%\scripts\check-stdlib-floor.py" "%ROOT%\packages\%PKG%\recipe\variants.yaml" "!BUILT!" !BUILT_OMP!
 if errorlevel 1 exit /b 1
 pixi exec --spec "python>=3.14" python "%ROOT%\scripts\publish-crossbuilt.py" "%RB_OUT%\%TARGET%" "%ROOT%\channel\%TARGET%"
 if errorlevel 1 exit /b 1

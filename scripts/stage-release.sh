@@ -4,7 +4,7 @@
 # native runners before anything reaches prefix.dev. Run on gamma.
 #
 #   scripts/stage-release.sh <version> [tag]        # default tag: staging-<version>-<YYYYMMDD>
-#   scripts/stage-release.sh 23.1.1 --dry-run
+#   scripts/stage-release.sh 23.1.5 --dry-run
 #
 # Collects <subdir>/*-<version>-*.conda from gamma's own channel and from
 # omicron:projects/flang-pixi/channel and kappa:C:/Users/admin/projects/flang-pixi/channel
@@ -14,7 +14,7 @@
 # (promote: true) once every platform is green. Delete the pre-release
 # afterwards: gh release delete <tag> --yes --cleanup-tag
 set -euo pipefail
-ver="${1:?version, e.g. 23.1.1}"; shift || true
+ver="${1:?version, e.g. 23.1.5}"; shift || true
 tag="staging-${ver}-$(date +%Y%m%d)"; dry=0
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; *) tag="$a" ;; esac; done
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,18 +24,18 @@ mkdir -p "$stage"
 collect() { # collect <subdir> <local-dir-with-conda-files>
   local sd="$1" dir="$2" n=0
   # consumer set only: llvm-zig is a build-time input and is never tested or published
-  for f in "$dir"/{lld-zig,flang-zig,flang-rt-zig}-"$ver"-*.conda; do [[ -e "$f" ]] || continue; cp -n "$f" "$stage/${sd}--$(basename "$f")"; n=$((n+1)); done
+  for f in "$dir"/{lld-zig,flang-zig,flang-rt-zig,llvm-openmp}-"$ver"-*.conda; do [[ -e "$f" ]] || continue; cp -n "$f" "$stage/${sd}--$(basename "$f")"; n=$((n+1)); done
   echo "  $sd: $n file(s) from $dir"
 }
 echo "== collecting version $ver into $stage"
 for sd in linux-64 linux-aarch64; do collect "$sd" "$root/channel/$sd"; done
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 for sd in osx-64 osx-arm64; do
-  mkdir -p "$tmp/$sd"; rsync -a --include="lld-zig-$ver-*.conda" --include="flang-zig-$ver-*.conda" --include="flang-rt-zig-$ver-*.conda" --exclude="*" "omicron:projects/flang-pixi/channel/$sd/" "$tmp/$sd/" && collect "$sd" "$tmp/$sd"
+  mkdir -p "$tmp/$sd"; rsync -a --include="lld-zig-$ver-*.conda" --include="flang-zig-$ver-*.conda" --include="flang-rt-zig-$ver-*.conda" --include="llvm-openmp-$ver-zig_*.conda" --exclude="*" "omicron:projects/flang-pixi/channel/$sd/" "$tmp/$sd/" && collect "$sd" "$tmp/$sd"
 done
 for sd in win-64 win-arm64; do
   mkdir -p "$tmp/$sd"
-  for f in $(ssh kappa "dir /b C:\\Users\\admin\\projects\\flang-pixi\\channel\\$sd" | tr -d '\r' | grep -E "^(lld-zig|flang-zig|flang-rt-zig)-$ver-.*\.conda$"); do
+  for f in $(ssh kappa "dir /b C:\\Users\\admin\\projects\\flang-pixi\\channel\\$sd" | tr -d '\r' | grep -E "^(lld-zig|flang-zig|flang-rt-zig|llvm-openmp)-$ver-.*\.conda$"); do
     scp -q "kappa:C:/Users/admin/projects/flang-pixi/channel/$sd/$f" "$tmp/$sd/$f"
   done
   collect "$sd" "$tmp/$sd"

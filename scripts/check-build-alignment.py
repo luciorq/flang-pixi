@@ -12,7 +12,7 @@ Exit 1 on any violation or on a subdir with no file at all.
 """
 import argparse, json, os, re, sys, urllib.request
 
-PKGS = ("lld-zig", "flang-zig", "flang-rt-zig")
+PKGS = ("lld-zig", "flang-zig", "flang-rt-zig", "llvm-openmp")
 SUBDIRS = ("linux-64", "linux-aarch64", "osx-arm64", "osx-64", "win-64", "win-arm64")
 RX = re.compile(r"^(?P<pkg>[a-z-]+)-(?P<ver>[\d.]+)-zig_[0-9a-f]+_(?P<bn>\d+)\.conda$")
 
@@ -54,6 +54,15 @@ def main():
     newest = from_dir(a.channel_dir, version) if a.channel_dir else from_universe(version)
     hot = {(h["package"], h["subdir"], int(h["build"])) for h in cfg.get("hotfixes", [])}
     bad = 0
+    # flang-zig run-pins lld-zig by build number (`lld_build` in its recipe's
+    # context): it must name the release's lld-zig, or flang-zig is
+    # unsolvable (the 23.1.5 bump first left it at the 23.1.1 number).
+    fz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages", "flang-zig", "recipe", "recipe.yaml")
+    m = re.search(r'^\s*lld_build:\s*"?(\d+)"?', open(fz).read(), re.M) if os.path.exists(fz) else None
+    want = cfg["release"].get("lld-zig")
+    if m and want is not None and int(m.group(1)) != want:
+        print(f"flang-zig recipe pins lld-zig build {m.group(1)} (lld_build) but the release's lld-zig is {want}")
+        bad += 1
     print(f"{'package':14s} " + " ".join(f"{s:>13s}" for s in SUBDIRS) + "   rule")
     for pkg in PKGS:
         rel = cfg["release"].get(pkg)

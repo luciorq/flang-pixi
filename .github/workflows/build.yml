@@ -96,7 +96,7 @@ jobs:
           - { label: windows-2025,      probe: true }
           - { label: windows-11-arm,    probe: false }   # no zig_win-arm64 in the win-arm64 subdir
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: hardware
         shell: bash
         run: |
@@ -112,9 +112,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           sudo docker image prune -af >/dev/null 2>&1 || true
           echo "after cleanup:" | tee -a "$GITHUB_STEP_SUMMARY"; df -h . | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         if: matrix.probe
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           environments: zig-probe
           cache: true
       - name: probe
@@ -139,7 +141,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/stage
         with:
           package: llvm-zig
@@ -156,7 +158,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/stage
         with:
           package: lld-zig
@@ -172,7 +174,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/stage
         with:
           package: flang-zig
@@ -190,7 +192,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/stage
         with:
           package: flang-rt-zig
@@ -206,13 +208,15 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: channel-${{ matrix.target }}
           path: ${{ env.OUT }}
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           run-install: false
       - name: compile and run tests/*.f90 with the built flang
         shell: bash
@@ -233,7 +237,7 @@ jobs:
       matrix:
         package: [llvm-zig, lld-zig, flang-zig, flang-rt-zig]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/stage
         with:
           package: ${{ matrix.package }}
@@ -251,13 +255,15 @@ jobs:
     runs-on: windows-11-arm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: channel-win-arm64
           path: ${{ env.OUT }}
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           run-install: false
       - shell: bash
         run: bash scripts/ci-smoke.sh "$OUT"
@@ -269,19 +275,21 @@ jobs:
     if: ${{ inputs.publish && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: channel-*
           path: channels
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           run-install: false
       - name: upload consumer set (never llvm-zig)
         env:
           PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
         run: |
           set -euo pipefail
-          files=$(find channels -name '*.conda' | grep -E '/(lld-zig|flang-zig|flang-rt-zig)-' | sort)
+          files=$(find channels -name '*.conda' | grep -E '/(lld-zig|flang-zig|flang-rt-zig|llvm-openmp)-' | sort)
           echo "$files"
           # -v: without it a successful upload prints NOTHING (docs/14).
           pixi exec rattler-build -v upload prefix --channel universe --skip-existing $files
@@ -295,7 +303,7 @@ jobs:
           import json, os, sys, urllib.request
           want = set(open("uploaded.txt").read().split())
           have = set()
-          for name in ("lld-zig", "flang-zig", "flang-rt-zig"):
+          for name in ("lld-zig", "flang-zig", "flang-rt-zig", "llvm-openmp"):
               q = {"query": '{ channel(name:"universe") { packages(filters:{name:{eq:"%s"}}, limit:1) { page { variants(includeHidden:true, limit:100) { page { filename hidden activeQuarantines { reason } } } } } } }' % name}
               req = urllib.request.Request("https://prefix.dev/api/graphql", data=json.dumps(q).encode(),
                                            headers={"Authorization": "Bearer " + os.environ["PREFIX_API_KEY"], "Content-Type": "application/json"})

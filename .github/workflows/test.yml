@@ -19,7 +19,7 @@ on:
         type: string
       version:
         description: "Version pin for flang-zig / flang-rt-zig (empty = latest)"
-        default: "23.1.1"
+        default: "23.1.5"
         type: string
       targets:
         description: "Comma-separated subdirs to test"
@@ -34,7 +34,7 @@ on:
 
 env:
   SOURCE: ${{ inputs.source || 'https://prefix.dev/universe' }}
-  VERSION: ${{ inputs.version || '23.1.1' }}
+  VERSION: ${{ inputs.version || '23.1.5' }}
 
 jobs:
   plan:
@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: defender exclusions (windows)
         if: runner.os == 'Windows'
@@ -81,8 +81,10 @@ jobs:
           Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE\.pixi","$env:USERPROFILE\.cache"
           Add-MpPreference -ExclusionProcess "zig.exe","clang.exe","flang.exe","flang-23.exe","lld-link.exe","ld.lld.exe","pixi.exe"
 
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           run-install: false
 
       # release:<tag> → download this subdir's assets, index a local channel
@@ -139,8 +141,10 @@ jobs:
     if: ${{ inputs.promote && startsWith(inputs.source, 'release:') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: prefix-dev/setup-pixi@v0.11.0
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
+          # the pixi that wrote pixi.lock (bump both together)
+          pixi-version: v0.84.2
           run-install: false
       - name: download all assets
         env:
@@ -155,7 +159,7 @@ jobs:
           PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
         run: |
           set -euo pipefail
-          files=$(ls dl/*.conda | grep -E -- '--(lld-zig|flang-zig|flang-rt-zig)-' | sort)
+          files=$(ls dl/*.conda | grep -E -- '--(lld-zig|flang-zig|flang-rt-zig|llvm-openmp)-' | sort)
           # assets are named <subdir>--<file>; rattler-build needs the real filename
           mkdir up; for f in $files; do b="${f##*/}"; cp "$f" "up/${b#*--}"; done
           ls up
@@ -170,7 +174,7 @@ jobs:
           import json, os, sys, urllib.request
           want = set(open("uploaded.txt").read().split())
           have = set()
-          for name in ("lld-zig", "flang-zig", "flang-rt-zig"):
+          for name in ("lld-zig", "flang-zig", "flang-rt-zig", "llvm-openmp"):
               q = {"query": '{ channel(name:"universe") { packages(filters:{name:{eq:"%s"}}, limit:1) { page { variants(includeHidden:true, limit:100) { page { filename hidden activeQuarantines { reason } } } } } } }' % name}
               req = urllib.request.Request("https://prefix.dev/api/graphql", data=json.dumps(q).encode(),
                                            headers={"Authorization": "Bearer " + os.environ["PREFIX_API_KEY"], "Content-Type": "application/json"})

@@ -87,7 +87,9 @@ unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS \
 export CFLAGS="-O2 -fPIC -D_LIBCPP_VERSION=1 -g0 -fvisibility=hidden -mcpu=baseline"
 export CXXFLAGS="-O2 -fPIC -g0 -fvisibility=hidden -fvisibility-inlines-hidden -mcpu=baseline"
 
-MAJOR_VER="${PKG_VERSION%%.*}"
+# Staging outputs get no PKG_NAME / PKG_VERSION from rattler-build (docs/16
+# §3c note); the recipe passes the LLVM major as FLANG_RT_MAJOR.
+MAJOR_VER="${FLANG_RT_MAJOR:?recipe.yaml sets FLANG_RT_MAJOR for the staging build}"
 
 FLANG_BIN="${BUILD_PREFIX}/bin/flang"
 test -x "${FLANG_BIN}" || {
@@ -265,6 +267,34 @@ for _p in "${BUILD_PREFIX}" "${PREFIX}"; do
   fi
 done
 
+# libomp's own flags (it builds inside the runtimes build below; the
+# libomp section after `cmake --install` says why each option is set).
+# Default visibility for libomp alone: see there.
+OMP_CXXFLAGS="-fvisibility=default"
+OMP_LDFLAGS=""
+if [[ "${target_platform}" == osx-* ]]; then
+  # kmp_wrapper_getpid.h includes <sys/syscall.h> on every Unix; zig's
+  # bundled Darwin headers (used with the explicit zig target above) lack it,
+  # and Darwin's libomp uses nothing from it (__kmp_gettid is
+  # pthread_mach_thread_np). An empty stub, found by the prototype
+  # cross-build 2026-11-11 (docs/10).
+  mkdir -p "${SRC_DIR}/omp-darwin-stub/sys"; : > "${SRC_DIR}/omp-darwin-stub/sys/syscall.h"
+  OMP_CXXFLAGS="${OMP_CXXFLAGS} -I${SRC_DIR}/omp-darwin-stub"
+  # zig's own Mach-O linker exports ___dso_handle from every dylib, and a
+  # dylib exporting it breaks Apple ld's link of an archive's static
+  # initializer on the same line (docs/16 §3d) — `flang -fopenmp` with
+  # libflang_rt.runtime.a and -lomp. conda-forge's zig honours -fuse-ld=lld
+  # for Mach-O (docs/16 D7) and lld keeps ___dso_handle private, but
+  # ld64.lld finds libSystem only in the SDK ("library not found for
+  # -lSystem" without it). Measured on omicron 2026-11-11 (zig 0.17.0 _6):
+  # zig's linker exports ___dso_handle, lld + -L$SDK/usr/lib does not, and
+  # the dylib keeps minos 11.0 and loads libSystem only. The tripwire at the
+  # end of this script checks the result.
+  _omp_sdk="${SDKROOT:-$(xcrun --show-sdk-path 2>/dev/null || true)}"
+  [[ -n "${_omp_sdk}" && -d "${_omp_sdk}/usr/lib" ]] || { echo "ERROR: no macOS SDK (SDKROOT / xcrun) for libomp's lld link" >&2; exit 1; }
+  OMP_LDFLAGS="-fuse-ld=lld -L${_omp_sdk}/usr/lib"
+fi
+
 cmake -G Ninja -S runtimes -B build \
   ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"} \
   -DCMAKE_C_COMPILER="${ZIG_CC}" \
@@ -284,7 +314,17 @@ cmake -G Ninja -S runtimes -B build \
   -DCMAKE_PROJECT_INCLUDE="${RECIPE_DIR}/cmake-project-include.cmake" \
   -DLLVM_DIR="${PREFIX}/lib/cmake/llvm" \
   -DLLVM_CMAKE_DIR="${PREFIX}/lib/cmake/llvm" \
-  -DLLVM_ENABLE_RUNTIMES="compiler-rt;flang-rt" \
+  -DLLVM_ENABLE_RUNTIMES="compiler-rt;flang-rt;openmp" \
+  -DLLVM_INCLUDE_TESTS=OFF \
+  -DOPENMP_ENABLE_TESTING=OFF \
+  -DOPENMP_INSTALL_LIBDIR=lib \
+  -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
+  -DOPENMP_ENABLE_OMPT_TOOLS=OFF \
+  -DLIBOMP_OMPD_SUPPORT=OFF \
+  -DLIBOMP_USE_HWLOC=OFF \
+  -DLIBOMP_INSTALL_ALIASES=OFF \
+  "-DLIBOMP_CXXFLAGS=${OMP_CXXFLAGS}" \
+  "-DLIBOMP_LDFLAGS=${OMP_LDFLAGS}" \
   -DFLANG_RT_ENABLE_SHARED=OFF \
   -DFLANG_RT_ENABLE_STATIC=ON \
   -DFLANG_RT_INCLUDE_TESTS=OFF \
@@ -302,6 +342,51 @@ cmake -G Ninja -S runtimes -B build \
 
 cmake --build build -j "${CPU_COUNT}"
 cmake --install build
+
+# --- libomp: the llvm-openmp output's files (docs/18 §5) ------------------
+# The runtimes build's `openmp` (23.1.5 build 0; LLVM 23 has no standalone
+# libomp build any more). Options above, and why:
+#   OPENMP_INSTALL_LIBDIR=lib   $PREFIX/lib/libomp.so, as conda-forge's, not a
+#                               per-target lib/<triple>/ dir;
+#   LIBOMP_CXXFLAGS=-fvisibility=default   libomp's sources come after the
+#       global CXXFLAGS on each compile line, so this undoes flang-rt's
+#       -fvisibility=hidden for libomp alone: on Linux its exports come from
+#       exports_so.txt (a version script cannot export a hidden symbol) and
+#       on macOS from default visibility (zig's Mach-O linker ignores
+#       export lists), so a hidden libomp would export nothing there;
+#   OMPT tools, OMPD, libomptarget, hwloc off: conda-forge's libarcher and
+#       libompd are omitted (nothing in R uses them; docs/18 §5.3 item 4);
+#   LIBOMP_INSTALL_ALIASES=OFF: upstream's aliases are libgomp + libiomp5,
+#       and a libgomp here would shadow GCC's real libgomp. conda-forge
+#       ships only the libiomp5 alias (lib/libiomp5.so, lib/libiomp5.dylib):
+#       made below.
+# The quad-precision atomics (__kmpc_atomic_*cmplx16*, *_fp) that
+# conda-forge's GCC-built Linux libomp exports are absent: libomp enables
+# them for GCC and Intel compilers only (kmp_os.h, KMP_HAVE_QUAD), and only
+# Intel compilers call them. Measured 2026-11-11: exports 1,202 vs 1,385
+# (linux-64), 1,092 vs 1,173 (linux-aarch64), the difference is exactly
+# those entry points; symbol-version nodes OMP_1.0 … OMP_6.0 and
+# GOMP_1.0 … GOMP_5.0.1 match.
+case "${target_platform}" in
+  osx-*) _omp_lib="${PREFIX}/lib/libomp.dylib" ;;
+  *)     _omp_lib="${PREFIX}/lib/libomp.so" ;;
+esac
+test -f "${_omp_lib}" || { echo "ERROR: ${_omp_lib} was not installed (openmp runtime)" >&2; find "${PREFIX}" -name 'libomp*' >&2; exit 1; }
+# omp.h etc. go to include/ when the runtimes build sees no LLVM tree, to the
+# clang resource dir's include/ otherwise; consumers (zig cc -fopenmp,
+# r-zig-pixi) read $PREFIX/include, as with conda-forge's package.
+for _h in omp.h ompx.h omp-tools.h ompt.h; do
+  if [[ ! -f "${PREFIX}/include/${_h}" ]]; then
+    _hsrc="$(find "${PREFIX}/lib/clang" -path "*/include/${_h}" -print -quit 2>/dev/null || true)"
+    [[ -n "${_hsrc}" ]] || { echo "ERROR: ${_h} was not installed (openmp runtime)" >&2; exit 1; }
+    mkdir -p "${PREFIX}/include"; mv "${_hsrc}" "${PREFIX}/include/${_h}"
+  fi
+done
+rm -f "${PREFIX}"/lib/libgomp* "${PREFIX}"/lib/libiomp5*
+case "${target_platform}" in
+  linux-*) ln -s libomp.so "${PREFIX}/lib/libiomp5.so" ;;
+  osx-*)   ln -s libomp.dylib "${PREFIX}/lib/libiomp5.dylib" ;;
+esac
 
 # --- expose the runtime at $PREFIX/lib --------------------------------------
 # flang-rt installs into the clang resource dir, at
@@ -369,30 +454,14 @@ if [[ -d "${finc}" ]]; then
     test -f "${_finc_dst}/__fortran_type_info.mod" || { echo "ERROR: __fortran_type_info.mod missing in ${_finc_dst}" >&2; exit 1; }
 
     # --- OpenMP Fortran module (omp_lib / omp_lib_kinds / omp_lib.h) -------
-    # conda-forge's llvm-openmp ships libomp + omp.h but no Fortran module,
-    # and .mod files are compiler-specific, so we build LLVM's own
-    # openmp/module/omp_lib.F90.var with this flang — the same five
-    # placeholders openmp/CMakeLists.txt substitutes (major/minor 5.0, spec
-    # year-month 201611, build number from kmp_version.cpp, no timestamp).
-    # The module is pure bind(c) interfaces onto libomp's stable C ABI, so
-    # it works against conda-forge's runtime (run dep). docs/10 2026-09-18.
-    _omp_src="${SRC_DIR}/openmp/module"
-    _omp_build="$(grep -oE 'KMP_VERSION_BUILD +[0-9]+' "${SRC_DIR}/openmp/runtime/src/kmp_version.cpp" | grep -oE '[0-9]+$')"
-    _omp_tmp="$(mktemp -d)"
-    for f in omp_lib.F90 omp_lib.h; do
-      sed -e "s/@LIBOMP_VERSION_MAJOR@/5/g" -e "s/@LIBOMP_VERSION_MINOR@/0/g" \
-          -e "s/@LIBOMP_OMP_YEAR_MONTH@/201611/g" -e "s/@LIBOMP_VERSION_BUILD@/${_omp_build:-20140926}/g" \
-          -e "s/@LIBOMP_BUILD_DATE@/No_Timestamp/g" "${_omp_src}/${f}.var" > "${_omp_tmp}/${f}"
+    # Built by the runtimes build's openmp/module with this flang and the
+    # intrinsic modules just built (flang_module_target), installed beside
+    # them; until 23.1.1 build 11 this script compiled omp_lib.F90.var by hand
+    # with guessed version values (5.0 / 201611). Check it is there.
+    for _m in omp_lib.mod omp_lib_kinds.mod omp_lib.h; do
+      test -f "${_finc_dst}/${_m}" || { echo "ERROR: ${_m} missing in ${_finc_dst} (openmp/module did not build: LIBOMP_FORTRAN_MODULES?)" >&2; exit 1; }
     done
-    # -fintrinsic-modules-path: use the iso_c_binding etc. we JUST built (in
-    # $PREFIX); the build-env flang's own cfg points at $BUILD_PREFIX, where
-    # no flang-rt is installed, and a stale/absent module set makes kinds
-    # like c_size_t non-interoperable ("A BIND(C) VALUE dummy argument must
-    # have an interoperable type" on the first build-4 attempt).
-    ( cd "${_omp_tmp}" && "${FLANG_BIN}" -c -fopenmp -fintrinsic-modules-path "${_finc_dst}" omp_lib.F90 -module-dir "${_omp_tmp}" -o omp_lib.o )
-    cp "${_omp_tmp}"/omp_lib.mod "${_omp_tmp}"/omp_lib_kinds.mod "${_omp_tmp}"/omp_lib.h "${_finc_dst}/"
-    rm -rf "${_omp_tmp}"
-    echo "OpenMP Fortran module installed: $(ls "${_finc_dst}" | grep -c omp_lib) files under ${_finc_dst}"
+    echo "OpenMP Fortran module present under ${_finc_dst}"
   fi
 else
   echo "ERROR: no ${finc} — the intrinsic modules were not installed" >&2; exit 1
@@ -486,7 +555,7 @@ if [[ "${target_platform}" == linux-* ]]; then
   ZIG_GLIBC_FLOOR="${ZIG_GLIBC_FLOOR:-2.17}"
   # The real .so lives in the clang resource dir; lib/libflang_rt.runtime.so
   # is a symlink to it (which the -L test skips) — glob both locations.
-  for c in "${PREFIX}"/lib/libflang_rt*.so* "${PREFIX}"/lib/clang/*/lib/*/libflang_rt*.so*; do
+  for c in "${PREFIX}"/lib/libflang_rt*.so* "${PREFIX}"/lib/clang/*/lib/*/libflang_rt*.so* "${PREFIX}/lib/libomp.so"; do
     [[ -f "$c" && ! -L "$c" ]] && check_glibc_ceiling "$c"
   done
 fi
@@ -572,3 +641,44 @@ else
   fi
 fi
 echo "runtime tripwire OK: static-only archive, ${_probe_sym} hidden (docs/16 §3d)"
+
+# --- tripwire: libomp's export surface (llvm-openmp, docs/18 §5.3) -------
+# A drop-in must export the OpenMP API under conda-forge's symbol versions
+# (Linux: binaries linked against conda-forge's libomp carry references like
+# omp_get_num_threads@OMP_1.0 and fail to load without the version nodes),
+# the GOMP compatibility layer, and no C++ runtime (zig's libc++ is static
+# and must stay internal).
+_omp_od=""; for _c in "${BUILD_PREFIX}/bin/llvm-objdump" "${PREFIX}/bin/llvm-objdump"; do [[ -x "${_c}" ]] && { _omp_od="${_c}"; break; }; done
+[[ -n "${_omp_od}" ]] || _tw_fail "no llvm-objdump for the libomp export tripwire"
+# Each tool runs once into a variable: `tool | grep -q` under pipefail fails
+# at random (grep exits at the first match, the tool gets SIGPIPE).
+case "${target_platform}" in
+  linux-*)
+    _omp_syms=$("${_omp_od}" -T "${PREFIX}/lib/libomp.so")
+    _omp_n=$(grep -c ' DF .text' <<<"${_omp_syms}" || true)
+    _omp_vn=$("${_omp_od}" -p "${PREFIX}/lib/libomp.so" | awk '/Version definitions:/{v=1;next} v&&NF==0{v=0} v{print $NF}' | sort -u | tr '\n' ' ')
+    for _v in OMP_1.0 OMP_5.0 OMP_6.0 GOMP_1.0 GOMP_4.0 GOMP_5.0.1 VERSION; do
+      [[ " ${_omp_vn} " == *" ${_v} "* ]] || _tw_fail "libomp.so lacks the symbol-version node ${_v} (have: ${_omp_vn})"
+    done
+    for _s in omp_get_num_threads GOMP_parallel __kmpc_fork_call __kmpc_global_thread_num; do
+      grep -qE " ${_s}\$" <<<"${_omp_syms}" || _tw_fail "libomp.so does not export ${_s}"
+    done
+    _omp_cxx=$(grep -v '\*UND\*' <<<"${_omp_syms}" | grep -cE ' _ZN?St|__cxa_|__gxx_' || true)
+    ;;
+  osx-*)
+    _omp_syms=$(nm -gU "${PREFIX}/lib/libomp.dylib")
+    _omp_n=$(grep -c . <<<"${_omp_syms}" || true)
+    for _s in _omp_get_num_threads ___kmpc_fork_call ___kmpc_global_thread_num _GOMP_parallel; do
+      grep -qE " ${_s}\$" <<<"${_omp_syms}" || _tw_fail "libomp.dylib does not export ${_s} (hidden visibility reached libomp?)"
+    done
+    # docs/16 §3d: a dylib exporting ___dso_handle breaks Apple ld's link of
+    # an archive's static initializer (libflang_rt.runtime.a) on the same
+    # line — exactly `flang -fopenmp` on macOS.
+    grep -qE ' ___dso_handle$' <<<"${_omp_syms}" && _tw_fail "libomp.dylib exports ___dso_handle (docs/16 §3d): link it with lld"
+    _omp_id=$(otool -D "${PREFIX}/lib/libomp.dylib" | tail -1)
+    [[ "${_omp_id}" == "@rpath/libomp.dylib" ]] || _tw_fail "libomp.dylib install name is ${_omp_id}, conda-forge's is @rpath/libomp.dylib"
+    _omp_cxx=$(grep -cE ' __ZN?St|___cxa_|___gxx_' <<<"${_omp_syms}" || true)
+    ;;
+esac
+[[ "${_omp_cxx:-0}" == 0 ]] || _tw_fail "libomp exports ${_omp_cxx} C++ runtime symbols — zig's static libc++ leaked into the export table"
+echo "libomp tripwire OK: ${_omp_n} exported functions, version nodes and API present, no C++ runtime exports (docs/18 §5.3)"

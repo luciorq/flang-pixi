@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
 #
-# Stage 3 — flang-rt-zig
+# Stage 3 — flang-rt-zig and llvm-openmp (zig build)
 #
 # The Fortran runtime. Since LLVM 21 this lives in `flang-rt` and is built as an
 # LLVM *runtime* (from the `runtimes/` directory), not as a project — the same
@@ -11,19 +11,43 @@
 # dependency. This is why the three stages cannot be collapsed into one CMake
 # invocation without an in-tree bootstrap.
 #
+# Since 23.1.5 build 0 the same runtimes build also builds `openmp` (LLVM 23
+# builds libomp only through runtimes/; the legacy standalone mode is gone).
+# One staging build, two packages:
+#   llvm-openmp      libomp (+ its headers and the Windows import libraries):
+#                    the channel's own OpenMP runtime, published under
+#                    conda-forge's NAME with a `zig_*` build string (user
+#                    decision 2026-11-11, docs/18 §5.4): on a channel listed
+#                    before conda-forge it is the llvm-openmp every package
+#                    gets, so conda-forge packages that depend on llvm-openmp
+#                    by name (fftw, muparser, libopenblas openmp_*, mkl, ...)
+#                    still solve. A drop-in: same file names, SONAME /
+#                    install name, export set and symbol versions (docs/10
+#                    2026-11-11). Built with zig, so on Windows it
+#                    imports the UCRT api-sets directly (no VCRUNTIME140), and
+#                    on win-arm64 it uses libomp's assembly
+#                    __kmp_invoke_microtask (z_Linux_asm.S) instead of the C
+#                    fallback conda-forge's MSVC build gets, which drops every
+#                    argument after the sixth (r-zig-pixi PR #48: data.table's
+#                    grouped sum crashed with an access violation).
+#   flang-rt-zig     the Fortran runtime, compiler-rt's CRT/builtins, the
+#                    intrinsic modules and omp_lib.mod (now built by the
+#                    runtimes build's own openmp/module with this flang).
+# docs/18 §5 is the decision record.
+#
 # Build history and per-platform status: docs/10-status-log.md.
 
 context:
-  version: "23.1.1"
+  version: "23.1.5"
   major: "23"
 
-package:
-  name: flang-rt-zig
+recipe:
+  name: flang-rt-zig-split
   version: ${{ version }}
 
 source:
   url: https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-${{ version }}.tar.gz
-  sha256: 851b3d701a4fbdd9f69536d4acda578469e810ca7056687d6556443f5fd39557
+  sha256: 70642a7e44e63c0ceff6624e5fd077b87766e4ed0bcd4a3ea8e3ffa3827ba538
 
 build:
   # 1: rebuilt against the X86;AArch64 llvm-zig (2026-08-27). The build-string
@@ -92,174 +116,319 @@ build:
   #    and libcompat_arm64 (fixed in zig 0.17 for both sources); win-arm64
   #    rebuilt once more without them. The 0.16 set (lld 5 / flang 6 /
   #    flang-rt 10) stays on universe: r-zig-toolchain pins it (`retain`).
-  # NEXT: 12 — the release after (lld 7 / flang 8 / flang-rt 12 / llvm-zig 6),
-  #    planned as the upstream-zig switch (docs/19 §6); `next_release` in
+  # 0: LLVM 23.1.5 generation, THIRD ALIGNED RELEASE (2026-11-11): every
+  #    package on ALL SIX subdirs at 0 (lld-zig / flang-zig / flang-rt-zig /
+  #    llvm-openmp 0; llvm-zig 0 build-only), conda-forge zig 0.17.0.
+  #    New: the `openmp` runtime in this build and the llvm-openmp
+  #    output (docs/18 §5); omp_lib.mod from the runtimes build instead of a
+  #    hand compile; on Windows libomp.dll.a is the build's own import
+  #    library instead of one generated from conda-forge's libomp.dll. The
+  #    23.1.1 releases (flang-rt 10/11) stay on universe while consumers pin
+  #    them (`retain` in scripts/build-alignment.json, now per version).
+  # NEXT: 1 — the upstream-zig switch (docs/19 §6); `next_release` in
   #    scripts/build-alignment.json.
-  number: 11
-  string: zig_${{ hash }}_${{ build_number }}
-  script:
-    file: build
-  # macOS: upstream flang-rt has no macOS support story yet and conda-forge
-  # skips flang entirely on osx. We do NOT skip here — proving or disproving
-  # macOS is one of the stated goals of this project (docs/01-goals-and-scope.md)
-  # — but expect this to be the stage that fails first.
-  # To skip while iterating on linux/windows, uncomment:
-  # skip:
-  #   - match(target_platform, "osx-*")
+  number: 0
 
-requirements:
-  build:
-    # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
-    # instruction" on the build host; zig is natively a cross-compiler, so
-    # use the proven zig_win-64 — build scripts pass
-    # --target=aarch64-windows-gnu explicitly.
-    - if: target_platform == "win-arm64"
-      then:
-        - zig_win-64 0.17.*
-    # linux-aarch64 cross from linux-64: same hosted-cross story as
-    # win-arm64 — use the build platform's proven zig; the build scripts'
-    # glibc-floor block keys off target_platform and passes
-    # --target=aarch64-linux-gnu.<floor> explicitly.
-    - if: target_platform == "linux-aarch64" and build_platform == "linux-64"
-      then:
-        - zig_linux-64 0.17.0.*
-    - if: target_platform != "win-arm64" and (target_platform != "linux-aarch64" or build_platform == "linux-aarch64")
-      then:
-        - ${{ compiler('zig') }}
-    - ${{ stdlib('c') }}
-    - cmake >=3.28
-    - ninja
-    - python
-    # The Fortran compiler that builds the runtime. In `build`, not `host`,
-    # because it must execute on the build machine.
-    - flang-zig ==${{ version }}
-    - llvm-zig ==${{ version }}
-  host:
-    - llvm-zig ==${{ version }}
-    # No libcxx on any platform since 2026-09-30: libc++ is zig's, static, on
-    # every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16).
-    # Windows: libomp.dll's export table is turned into a MinGW import
-    # library at build time (see build.bat, OpenMP section).
-    - if: win
-      then:
-        - llvm-openmp
-  run:
-    # OpenMP runtime for `flang -fopenmp` (all platforms): conda-forge's
-    # libomp — the same one zig cc / zig c++ code in r-zig-pixi links, so a
-    # process never carries two OpenMP runtimes. We ship only the Fortran
-    # module (omp_lib) and, on Windows, the link shims. docs/10 2026-09-18.
-    # >= major (docs/19 §7, build 10): the shipped omp_lib.mod is generated
-    # from THIS LLVM's omp_lib.F90.var and declares 6.0-era entry points
-    # that older libomp builds do not export. No upper bound: a newer libomp
-    # runs code built against an older module. win-64 already carried this
-    # floor through the host dependency's run export; now explicit everywhere.
-    - llvm-openmp >=${{ major }}
-    # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06): the
-    # stdlib run export reached linux-64 but not the cross-built
-    # linux-aarch64 packages (they declared no __glibc at all), so the floor
-    # is written here explicitly on every subdir. Values = c_stdlib_version
-    # (variants.yaml): glibc 2.17, macOS 11.0. Nothing on Windows (UCRT).
-    - if: linux
-      then:
-        - __glibc >=${{ c_stdlib_version }},<3.0.a0
-    - if: osx
-      then:
-        - __osx >=${{ c_stdlib_version }}
-  # flang-rt is pure link-time input (a static archive; no shared runtime
-  # since build 9) — nothing
-  # in it invokes llvm-zig tools at use time, and the lld-zig split's
-  # amputation test (docs/10-status-log.md, 2026-08-25) ran fine without any
-  # llvm-zig files present. llvm-zig's strong run_export would re-add the
-  # ~3 GiB dependency; consumers get their linker via flang-zig -> lld-zig.
-  ignore_run_exports:
-    from_package:
-      - llvm-zig
-    # vs2022 runtime chain: irrelevant for MinGW targets, breaks win-arm64
-    # solves (no ucrt in conda-forge's win-arm64 subdir).
-    by_name:
-      - ucrt
-      - vs2022_runtime
-      # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
-      # were guesses that missed): these landed in the first win-arm64 llvm
-      # package's depends. Meaningless for MinGW targets.
-      - vc
-      - vc14_runtime
-  run_constraints:
-    # Guard rail: the ancient PGI-derived `libflang` and conda-forge's
-    # libstdc++-built `libflang-rt` are both ABI-incompatible with this one.
-    - libflang <0.0a0
-    - libflang-rt <0.0a0
+outputs:
+  # --- the one build: flang-rt + compiler-rt + openmp (build.sh / build.bat) --
+  - staging:
+      name: flang-rt-zig-build
+    requirements:
+      build:
+        # win-arm64 cross: zig_win-arm64's x64-hosted zig crashes with "Illegal
+        # instruction" on the build host; zig is natively a cross-compiler, so
+        # use the proven zig_win-64 — build scripts pass
+        # --target=aarch64-windows-gnu explicitly.
+        - if: target_platform == "win-arm64"
+          then:
+            - zig_win-64 0.17.*
+        # linux-aarch64 cross from linux-64: same hosted-cross story as
+        # win-arm64 — use the build platform's proven zig; the build scripts'
+        # glibc-floor block keys off target_platform and passes
+        # --target=aarch64-linux-gnu.<floor> explicitly.
+        - if: target_platform == "linux-aarch64" and build_platform == "linux-64"
+          then:
+            - zig_linux-64 0.17.0.*
+        - if: target_platform != "win-arm64" and (target_platform != "linux-aarch64" or build_platform == "linux-aarch64")
+          then:
+            - ${{ compiler('zig') }}
+        - ${{ stdlib('c') }}
+        - cmake >=3.28
+        - ninja
+        # libomp's build generates its export lists and message catalogue
+        # with Python scripts (openmp/runtime/tools).
+        - python
+        # The Fortran compiler that builds the runtime (and omp_lib.mod). In
+        # `build`, not `host`, because it must execute on the build machine.
+        - flang-zig ==${{ version }}
+        # Also the build machine's llvm-ml64 for libomp's MASM file on
+        # Windows, and llvm-ar/llvm-ranlib on unix (build.sh).
+        - llvm-zig ==${{ version }}
+      host:
+        - llvm-zig ==${{ version }}
+        # No libcxx on any platform since 2026-09-30: libc++ is zig's, static,
+        # on every subdir (ZIG_LIB_DIR mirror in build.sh; docs/16). No
+        # llvm-openmp since 23.1.5 build 0: libomp is built here.
+      # flang-rt is pure link-time input (a static archive; no shared runtime
+      # since build 9) — nothing in it invokes llvm-zig tools at use time, and
+      # the lld-zig split's amputation test (docs/10-status-log.md,
+      # 2026-08-25) ran fine without any llvm-zig files present. llvm-zig's
+      # strong run_export would re-add the ~3 GiB dependency; consumers get
+      # their linker via flang-zig -> lld-zig. The outputs below do not
+      # inherit run exports either (`run_exports: false`): each declares its
+      # own run requirements.
+      ignore_run_exports:
+        from_package:
+          - llvm-zig
+        # vs2022 runtime chain: irrelevant for MinGW targets, breaks win-arm64
+        # solves (no ucrt in conda-forge's win-arm64 subdir).
+        by_name:
+          - ucrt
+          - vs2022_runtime
+          # The vs2022 chain's ACTUAL export names (ucrt/vs2022_runtime above
+          # were guesses that missed): these landed in the first win-arm64
+          # llvm package's depends. Meaningless for MinGW targets.
+          - vc
+          - vc14_runtime
+          # conda-forge's zig compiler packages run-export their C++ runtime since
+          # zig 0.17.0 build 6 (2026-11): libcxx >=22 on osx; libstdcxx + libgcc
+          # (>=15 linux, >=16.2 win). Our binaries link zig's static libc++ (ZIG_LIB_DIR
+          # mirror, docs/16) and the load-dep tripwire proves they need neither;
+          # the 23.1.5 builds first picked these up (docs/10 2026-11-11), and on
+          # osx the shared libc++ in the host prefix tripped that tripwire.
+          - libcxx
+          - libstdcxx
+          - libgcc
+    build:
+      script:
+        file: build
+        # A staging output gets no PKG_VERSION (rattler-build); build.sh
+        # needs the LLVM major for the clang resource dir.
+        env:
+          FLANG_RT_MAJOR: ${{ major }}
 
-tests:
-  - script:
-      - if: unix
-        then:
-          # Layout matches upstream: the runtime installs into the clang
-          # resource directory under a target-specific subdirectory, and we
-          # additionally expose it at $PREFIX/lib. See build.sh.
-          - test -f "${PREFIX}/lib/libflang_rt.runtime.a"
-      - if: win
-        then:
-          # The runtime lives in the clang resource dir under the target
-          # triple (lib\clang\<major>\lib\<arch>-w64-windows-gnu\), MinGW
-          # naming. `where /r` because cmd's `if exist` cannot take a wildcard
-          # mid-path. (The old top-level `flang_rt.runtime.static.lib` check
-          # cannot hold for this layout — no build ever shipped that file —
-          # yet it went unnoticed through every `pixi publish` build; the
-          # first standalone rattler-build test run caught it.)
-          - where /r "%LIBRARY_LIB%\clang" libflang_rt.runtime.a
-          - where /r "%LIBRARY_LIB%\clang" omp_lib.mod
-          - if not exist "%LIBRARY_PREFIX%\x86_64-w64-mingw32\lib\libomp.dll.a" if not exist "%LIBRARY_PREFIX%\aarch64-w64-mingw32\lib\libomp.dll.a" exit 1
-
-  # The real proof: compile AND link AND run a Fortran program.
-  - script:
-      - if: unix
-        then:
-          # macOS: flang's Darwin driver needs the SDK to find libSystem at
-          # link time and honours SDKROOT like clang; the test env does not
-          # always carry one (seen on the osx-64 Rosetta build: "ld: library
-          # 'System' not found"). Same resolution as scripts/smoke-test.sh.
-          - if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then export SDKROOT="$(xcrun --show-sdk-path)"; fi
-          - flang hello.f90 -o hello
-          - ./hello
-          # Derived types need the intrinsic __fortran_type_info module,
-          # which LLVM >= 23 ships in this package's finclude dir — this is
-          # the test that caught the osx-arm64 23.1.1 breakage (docs/10).
-          - flang modules.f90 -o modules
-          - ./modules
-          # OpenMP: directives → libomp, and the omp_lib module we ship.
-          - test -f "$(dirname "$(find "${PREFIX}/lib/clang" -name omp_lib.mod | head -1)")/omp_lib_kinds.mod"
-          - flang -fopenmp omp_directives.f90 -o omp_directives
-          - OMP_NUM_THREADS=2 ./omp_directives
-          - flang -fopenmp omp_lib_use.f90 -o omp_lib_use
-          - OMP_NUM_THREADS=2 ./omp_lib_use
-      - if: win
-        then:
-          - flang.exe hello.f90 -o hello.exe
-          - hello.exe
-          - flang.exe modules.f90 -o modules.exe
-          - modules.exe
-          - flang.exe -fopenmp omp_directives.f90 -o omp_directives.exe
-          - set OMP_NUM_THREADS=2
-          - omp_directives.exe
-          - flang.exe -fopenmp omp_lib_use.f90 -o omp_lib_use.exe
-          - omp_lib_use.exe
+  # --- libomp (conda-forge's package name; docs/18 §5.4) ----------------------
+  - package:
+      name: llvm-openmp
+    inherit:
+      from: flang-rt-zig-build
+      run_exports: false
+    build:
+      string: zig_${{ hash }}_${{ build_number }}
+      # conda-forge llvm-openmp's runtime files (docs/18 §5.1), minus libompd
+      # and libarcher (OMPD and the OMPT tools are off; nothing in R uses
+      # them), plus the MinGW import library on Windows. build.sh / build.bat
+      # assert that each of these exists.
+      files:
+        - if: linux
+          then:
+            - lib/libomp.so
+            - lib/libiomp5.so
+        - if: osx
+          then:
+            - lib/libomp.dylib
+            - lib/libiomp5.dylib
+        - if: unix
+          then:
+            - include/omp.h
+            - include/ompx.h
+            - include/omp-tools.h
+            - include/ompt.h
+        - if: win
+          then:
+            - Library/bin/libomp.dll
+            - Library/bin/libiomp5md.dll
+            # The MinGW import library (zig cc / flang -lomp), and the same
+            # archive under conda-forge's MSVC names (r-zig-pixi links
+            # Library/lib/libomp.lib; lld reads either).
+            - Library/lib/libomp.dll.a
+            - Library/lib/libomp.lib
+            - Library/lib/libiomp5md.lib
+            - Library/include/omp.h
+            - Library/include/ompx.h
     requirements:
       run:
-        - flang-zig ==${{ version }}
-    files:
-      recipe:
-        - hello.f90
-        - modules.f90
-        - omp_directives.f90
-        - omp_lib_use.f90
+        # Hand-declared C-library floors, as flang-rt-zig (docs/18 §6.3).
+        - if: linux
+          then:
+            - __glibc >=${{ c_stdlib_version }},<3.0.a0
+        - if: osx
+          then:
+            - __osx >=${{ c_stdlib_version }}
+      run_constraints:
+        # conda-forge llvm-openmp's own constraints: never beside Intel's
+        # runtime. (Beside conda-forge's llvm-openmp is impossible anyway:
+        # same name.)
+        - intel-openmp <0.0a0
+        - openmp ==${{ version }}|${{ version }}.*
+      # As conda-forge's: code built against this omp.h needs at least this
+      # libomp. Not copied: its Linux `_openmp_mutex * *_llvm` export, which
+      # repoints the environment's libgomp at libomp (a conda-forge
+      # convention r-zig-pixi does not want imposed on its users).
+      run_exports:
+        strong:
+          - llvm-openmp >=${{ version }}
+    tests:
+      - script:
+          - if: linux
+            then:
+              - test -f "${PREFIX}/lib/libomp.so"
+              - test -L "${PREFIX}/lib/libiomp5.so"
+              - test ! -e "${PREFIX}/lib/libgomp.so"
+              - test -f "${PREFIX}/include/omp.h"
+          - if: osx
+            then:
+              - test -f "${PREFIX}/lib/libomp.dylib"
+              - test -L "${PREFIX}/lib/libiomp5.dylib"
+              - test -f "${PREFIX}/include/omp.h"
+          - if: win
+            then:
+              - if not exist "%LIBRARY_BIN%\libomp.dll" exit 1
+              - if not exist "%LIBRARY_LIB%\libomp.dll.a" exit 1
+              - if not exist "%LIBRARY_LIB%\libomp.lib" exit 1
+              - if not exist "%LIBRARY_INC%\omp.h" exit 1
+    about:
+      homepage: https://openmp.llvm.org
+      license: Apache-2.0 WITH LLVM-exception
+      license_file: openmp/LICENSE.TXT
+      summary: LLVM OpenMP runtime (libomp) built with zig; conda-forge llvm-openmp's name, a zig_* build
+      repository: https://github.com/llvm/llvm-project
 
-about:
-  homepage: https://flang.llvm.org
-  license: Apache-2.0 WITH LLVM-exception
-  license_file: flang/LICENSE.TXT
-  summary: Fortran runtime library for flang-zig
-  repository: https://github.com/llvm/llvm-project
+  # --- the Fortran runtime ----------------------------------------------------
+  - package:
+      name: flang-rt-zig
+    inherit:
+      from: flang-rt-zig-build
+      run_exports: false
+    build:
+      string: zig_${{ hash }}_${{ build_number }}
+      # Everything the build installed except llvm-openmp's files.
+      files:
+        include:
+          - "**"
+        exclude:
+          - lib/libomp.so
+          - lib/libiomp5.so
+          - lib/libomp.dylib
+          - lib/libiomp5.dylib
+          - include/omp.h
+          - include/ompx.h
+          - include/omp-tools.h
+          - include/ompt.h
+          - Library/bin/libomp.dll
+          - Library/bin/libiomp5md.dll
+          - Library/lib/libomp.dll.a
+          - Library/lib/libomp.lib
+          - Library/lib/libiomp5md.lib
+          - Library/include/omp.h
+          - Library/include/ompx.h
+    requirements:
+      run:
+        # The OpenMP runtime for `flang -fopenmp` (all platforms): libomp, the
+        # one zig cc / zig c++ code in r-zig-pixi links, so a process never
+        # carries two OpenMP runtimes. A floor, not an exact pin: the package
+        # shares conda-forge's name, and with conda-forge listed first
+        # (strict channel priority) only conda-forge's llvm-openmp is
+        # visible, so an exact pin to this build would make flang-rt-zig
+        # uninstallable there. omp_lib.mod declares 23.x entry points, which
+        # conda-forge's >= 23.1.5 exports too. With universe first the
+        # solver takes this build (docs/18 §5.4).
+        - llvm-openmp >=${{ version }}
+        # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06):
+        # the stdlib run export reached linux-64 but not the cross-built
+        # linux-aarch64 packages (they declared no __glibc at all), so the
+        # floor is written here explicitly on every subdir. Values =
+        # c_stdlib_version (variants.yaml): glibc 2.17, macOS 11.0. Nothing on
+        # Windows (UCRT).
+        - if: linux
+          then:
+            - __glibc >=${{ c_stdlib_version }},<3.0.a0
+        - if: osx
+          then:
+            - __osx >=${{ c_stdlib_version }}
+      run_constraints:
+        # Guard rail: the ancient PGI-derived `libflang` and conda-forge's
+        # libstdc++-built `libflang-rt` are both ABI-incompatible with this one.
+        - libflang <0.0a0
+        - libflang-rt <0.0a0
+    tests:
+      - script:
+          - if: unix
+            then:
+              # Layout matches upstream: the runtime installs into the clang
+              # resource directory under a target-specific subdirectory, and we
+              # additionally expose it at $PREFIX/lib. See build.sh.
+              - test -f "${PREFIX}/lib/libflang_rt.runtime.a"
+          - if: win
+            then:
+              # The runtime lives in the clang resource dir under the target
+              # triple (lib\clang\<major>\lib\<arch>-w64-windows-gnu\), MinGW
+              # naming. `where /r` because cmd's `if exist` cannot take a wildcard
+              # mid-path. (The old top-level `flang_rt.runtime.static.lib` check
+              # cannot hold for this layout — no build ever shipped that file —
+              # yet it went unnoticed through every `pixi publish` build; the
+              # first standalone rattler-build test run caught it.)
+              - where /r "%LIBRARY_LIB%\clang" libflang_rt.runtime.a
+              - where /r "%LIBRARY_LIB%\clang" omp_lib.mod
+              - if not exist "%LIBRARY_PREFIX%\x86_64-w64-mingw32\lib\libomp.dll.a" if not exist "%LIBRARY_PREFIX%\aarch64-w64-mingw32\lib\libomp.dll.a" exit 1
+
+      # The real proof: compile AND link AND run a Fortran program.
+      - script:
+          - if: unix
+            then:
+              # macOS: flang's Darwin driver needs the SDK to find libSystem at
+              # link time and honours SDKROOT like clang; the test env does not
+              # always carry one (seen on the osx-64 Rosetta build: "ld: library
+              # 'System' not found"). Same resolution as scripts/smoke-test.sh.
+              - if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then export SDKROOT="$(xcrun --show-sdk-path)"; fi
+              - flang hello.f90 -o hello
+              - ./hello
+              # Derived types need the intrinsic __fortran_type_info module,
+              # which LLVM >= 23 ships in this package's finclude dir — this is
+              # the test that caught the osx-arm64 23.1.1 breakage (docs/10).
+              - flang modules.f90 -o modules
+              - ./modules
+              # OpenMP: directives → libomp, and the omp_lib module we ship.
+              - test -f "$(dirname "$(find "${PREFIX}/lib/clang" -name omp_lib.mod | head -1)")/omp_lib_kinds.mod"
+              - flang -fopenmp omp_directives.f90 -o omp_directives
+              - OMP_NUM_THREADS=2 ./omp_directives
+              - flang -fopenmp omp_lib_use.f90 -o omp_lib_use
+              - OMP_NUM_THREADS=2 ./omp_lib_use
+              # A parallel region with more than six shared variables: the
+              # outlined function takes >6 arguments, the case conda-forge's
+              # win-arm64 libomp dropped (docs/10 2026-11-11).
+              - flang -fopenmp omp_many_args.f90 -o omp_many_args
+              - OMP_NUM_THREADS=4 ./omp_many_args
+          - if: win
+            then:
+              - flang.exe hello.f90 -o hello.exe
+              - hello.exe
+              - flang.exe modules.f90 -o modules.exe
+              - modules.exe
+              - flang.exe -fopenmp omp_directives.f90 -o omp_directives.exe
+              - set OMP_NUM_THREADS=2
+              - omp_directives.exe
+              - flang.exe -fopenmp omp_lib_use.f90 -o omp_lib_use.exe
+              - omp_lib_use.exe
+              - flang.exe -fopenmp omp_many_args.f90 -o omp_many_args.exe
+              - set OMP_NUM_THREADS=4
+              - omp_many_args.exe
+        requirements:
+          run:
+            - flang-zig ==${{ version }}
+        files:
+          recipe:
+            - hello.f90
+            - modules.f90
+            - omp_directives.f90
+            - omp_lib_use.f90
+            - omp_many_args.f90
+    about:
+      homepage: https://flang.llvm.org
+      license: Apache-2.0 WITH LLVM-exception
+      license_file: flang/LICENSE.TXT
+      summary: Fortran runtime library for flang-zig
+      repository: https://github.com/llvm/llvm-project
 
 extra:
   recipe-maintainers:

@@ -97,6 +97,14 @@ REM set even with -lkernel32 ahead (docs/17 section 9); the wcstold shim and
 REM libcompat_arm64.a that 0.16 needed (docs/10 2026-09-19) are gone since the
 REM 2026-10-10 release.
 :native_build
+REM libomp (the openmp runtime, 23.1.5 build 0): its CMake enables ASM_MASM on
+REM every Windows target, and x64 assembles z_Windows_NT-586_asm.asm with it.
+REM zig has no MASM; llvm-zig (a build dependency) ships llvm-ml64, LLVM's
+REM MASM. Always the BUILD machine's copy (win-64 also on the arm64 cross);
+REM arm64 assembles z_Linux_asm.S with zig cc instead and never calls it.
+set "LLVM_ML=%BUILD_PREFIX%\Library\bin\llvm-ml64.exe"
+if not exist "%LLVM_ML%" ( echo ERROR: %LLVM_ML% missing - llvm-zig must be a build dependency & exit /b 1 )
+set "LLVM_ML_CMAKE=%LLVM_ML:\=/%"
 echo WIN_ABI_ARGS=%WIN_ABI_ARGS%
 echo CROSS_ARGS=%CROSS_ARGS%
 
@@ -117,7 +125,18 @@ cmake -G Ninja -S runtimes -B build %WIN_ABI_ARGS% %CROSS_ARGS% ^
   -DCMAKE_PROJECT_INCLUDE="%RECIPE_DIR_CMAKE%/cmake-project-include.cmake" ^
   -DLLVM_DIR="%LIBRARY_LIB%/cmake/llvm" ^
   -DLLVM_CMAKE_DIR="%LIBRARY_LIB%/cmake/llvm" ^
-  -DLLVM_ENABLE_RUNTIMES="flang-rt" ^
+  -DLLVM_ENABLE_RUNTIMES="flang-rt;openmp" ^
+  -DLLVM_INCLUDE_TESTS=OFF ^
+  -DOPENMP_ENABLE_TESTING=OFF ^
+  -DOPENMP_INSTALL_LIBDIR=lib ^
+  -DOPENMP_ENABLE_LIBOMPTARGET=OFF ^
+  -DOPENMP_ENABLE_OMPT_TOOLS=OFF ^
+  -DLIBOMP_OMPD_SUPPORT=OFF ^
+  -DLIBOMP_USE_HWLOC=OFF ^
+  -DLIBOMP_INSTALL_ALIASES=OFF ^
+  "-DLIBOMP_CXXFLAGS=-fvisibility=default" ^
+  -DCMAKE_ASM_MASM_COMPILER="%LLVM_ML_CMAKE%" ^
+  -DCMAKE_ASM_MASM_FLAGS=-m64 ^
   -DFLANG_RT_ENABLE_SHARED=OFF ^
   -DFLANG_RT_ENABLE_STATIC=ON ^
   -DFLANG_RT_INCLUDE_TESTS=OFF
@@ -190,54 +209,52 @@ for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\finclude\flang\" (
   if not exist "%%D\lib\%RT_TRIPLE%\libflang_rt.runtime.a" ( echo ERROR: libflang_rt.runtime.a missing under %%D\lib\%RT_TRIPLE% & exit /b 1 )
 )
 
-REM --- OpenMP: Fortran module + the two MinGW link shims ----------------------
-REM (1) omp_lib.mod / omp_lib_kinds.mod / omp_lib.h built from LLVM's
-REM     openmp\module\omp_lib.F90.var with this flang (see build.sh).
-REM (2) libomp.dll.a: `flang -fopenmp` emits -lomp, and the MinGW driver only
-REM     finds lib<name>.dll.a / <name>.lib, never conda-forge's MSVC-named
-REM     libomp.lib. Generate a MinGW import library from the exports of the
-REM     conda-forge libomp.dll (host dep) with zig's dlltool, so Fortran
-REM     OpenMP binds the SAME libomp.dll that zig cc's C/C++ code uses —
-REM     one OpenMP runtime per process.
-REM (3) libatomic.a: the driver also emits -latomic on Windows; zig's MinGW
-REM     CRT has no libatomic. An empty archive satisfies the reference
-REM     (atomic helpers live in compiler-rt builtins). docs/10 2026-09-18.
-set "OMP_TMP=%SRC_DIR%\omp-mod"
-mkdir "%OMP_TMP%" 2>nul
-for /f "tokens=3" %%V in ('findstr /c:"define KMP_VERSION_BUILD" "%SRC_DIR%\openmp\runtime\src\kmp_version.cpp"') do set "OMP_BUILD=%%V"
-if not defined OMP_BUILD set "OMP_BUILD=20140926"
-powershell -NoProfile -Command "$b='%OMP_BUILD%'; foreach ($f in 'omp_lib.F90','omp_lib.h') { (Get-Content -Raw \"%SRC_DIR%\openmp\module\$f.var\").Replace('@LIBOMP_VERSION_MAJOR@','5').Replace('@LIBOMP_VERSION_MINOR@','0').Replace('@LIBOMP_OMP_YEAR_MONTH@','201611').Replace('@LIBOMP_VERSION_BUILD@',$b).Replace('@LIBOMP_BUILD_DATE@','No_Timestamp') | Set-Content -NoNewline \"%OMP_TMP%\$f\" }"
-if errorlevel 1 ( echo ERROR: omp_lib template substitution failed & exit /b 1 )
-set "OMP_TARGET_FLAG="
-if "%target_platform%"=="win-arm64" set "OMP_TARGET_FLAG=--target=aarch64-w64-windows-gnu"
-pushd "%OMP_TMP%"
-REM -fintrinsic-modules-path: the freshly built intrinsic modules in %PREFIX%
-REM (see build.sh for why); the RT_TRIPLE dir exists after the rename above.
-set "OMP_FINC="
-for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\finclude\flang\%RT_TRIPLE%\iso_c_binding.mod" set "OMP_FINC=%%D\finclude\flang\%RT_TRIPLE%"
-if not defined OMP_FINC ( echo ERROR: freshly built intrinsic modules not found & exit /b 1 )
-"%FLANG_BIN%" -c -fopenmp %OMP_TARGET_FLAG% -fintrinsic-modules-path "%OMP_FINC%" omp_lib.F90 -module-dir "%OMP_TMP%" -o omp_lib.obj
-if errorlevel 1 ( popd & echo ERROR: omp_lib.F90 did not compile & exit /b 1 )
-popd
-for /d %%D in ("%LIBRARY_LIB%\clang\*") do (
-  for %%N in (%RT_TRIPLE% %FINC_TRIPLE%) do if exist "%%D\finclude\flang\%%N" (
-    copy /y "%OMP_TMP%\omp_lib.mod" "%%D\finclude\flang\%%N\" >nul
-    copy /y "%OMP_TMP%\omp_lib_kinds.mod" "%%D\finclude\flang\%%N\" >nul
-    copy /y "%OMP_TMP%\omp_lib.h" "%%D\finclude\flang\%%N\" >nul
-    echo OpenMP Fortran module installed under %%D\finclude\flang\%%N
+REM --- OpenMP: libomp (llvm-openmp), omp_lib.mod, the link shims ----------
+REM Since 23.1.5 build 0 the runtimes build builds `openmp` itself (docs/18
+REM section 5): libomp.dll with zig for the MinGW ABI, its own MinGW import
+REM library, and omp_lib.mod / omp_lib_kinds.mod / omp_lib.h through
+REM openmp\module with this flang. Until 23.1.1 build 11 this block compiled
+REM omp_lib.F90.var by hand and generated libomp.dll.a with dlltool from the
+REM exports of conda-forge's MSVC-built libomp.dll; conda-forge's win-arm64
+REM build drops every microtask argument after the sixth (its C fallback of
+REM __kmp_invoke_microtask; zig's build assembles z_Linux_asm.S instead).
+REM (1) omp_lib: the xcopy above copied the RT_TRIPLE dir, module included.
+for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\finclude\flang\" (
+  for %%N in (%RT_TRIPLE% %FINC_TRIPLE%) do for %%M in (omp_lib.mod omp_lib_kinds.mod omp_lib.h) do (
+    if not exist "%%D\finclude\flang\%%N\%%M" ( echo ERROR: %%M missing under %%D\finclude\flang\%%N - openmp\module did not build & exit /b 1 )
   )
 )
-set "OMP_DLL=%LIBRARY_BIN%\libomp.dll"
-if not exist "%OMP_DLL%" ( echo ERROR: %OMP_DLL% missing - llvm-openmp must be a host dependency & exit /b 1 )
-set "DLLTOOL_MACHINE=i386:x86-64"
-if "%target_platform%"=="win-arm64" set "DLLTOOL_MACHINE=arm64"
-python "%RECIPE_DIR%\pe-exports.py" "%OMP_DLL%" > "%OMP_TMP%\libomp.def"
-if errorlevel 1 ( echo ERROR: could not read libomp.dll exports & exit /b 1 )
-"%BUILD_PREFIX%\Library\bin\x86_64-w64-mingw32-zig.exe" dlltool -m %DLLTOOL_MACHINE% -d "%OMP_TMP%\libomp.def" -D libomp.dll -l "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a"
-if errorlevel 1 ( echo ERROR: dlltool failed & exit /b 1 )
+REM (2) libomp: the files of the llvm-openmp output, in conda-forge
+REM     llvm-openmp's places: Library\bin\libomp.dll and libiomp5md.dll (a
+REM     copy, upstream's Windows alias), headers in Library\include. The
+REM     import library is installed as Library\lib\libomp.dll.a (MinGW name);
+REM     add conda-forge's MSVC names (r-zig-pixi links Library\lib\libomp.lib;
+REM     lld reads the archive under either name).
+if not exist "%LIBRARY_BIN%\libomp.dll" ( echo ERROR: libomp.dll was not installed & exit /b 1 )
+if not exist "%LIBRARY_BIN%\libiomp5md.dll" copy /y "%LIBRARY_BIN%\libomp.dll" "%LIBRARY_BIN%\libiomp5md.dll" >nul
+if not exist "%LIBRARY_LIB%\libomp.dll.a" ( echo ERROR: libomp.dll.a was not installed & exit /b 1 )
+copy /y "%LIBRARY_LIB%\libomp.dll.a" "%LIBRARY_LIB%\libomp.lib" >nul
+REM libiomp5md: upstream installs Library\lib\libiomp5md.a, a copy of
+REM libomp's import library (it names libomp.dll, as conda-forge's
+REM libiomp5md.lib does too); conda-forge's name is .lib.
+if exist "%LIBRARY_LIB%\libiomp5md.a" move /y "%LIBRARY_LIB%\libiomp5md.a" "%LIBRARY_LIB%\libiomp5md.lib" >nul
+if not exist "%LIBRARY_LIB%\libiomp5md.lib" copy /y "%LIBRARY_LIB%\libomp.dll.a" "%LIBRARY_LIB%\libiomp5md.lib" >nul
+for %%H in (omp.h ompx.h) do if not exist "%LIBRARY_INC%\%%H" (
+  for /d %%D in ("%LIBRARY_LIB%\clang\*") do if exist "%%D\include\%%H" move /y "%%D\include\%%H" "%LIBRARY_INC%\%%H" >nul
+  if not exist "%LIBRARY_INC%\%%H" ( echo ERROR: %%H was not installed & exit /b 1 )
+)
+REM conda-forge ships no OMPT headers on Windows (OMPT is off there too).
+del /q "%LIBRARY_INC%\omp-tools.h" "%LIBRARY_INC%\ompt.h" 2>nul
+REM (3) The driver's own search directory: `flang -fopenmp` emits -lomp and
+REM     the MinGW driver searches Library\<triple>\lib (the CRT dir), where
+REM     flang-rt-zig keeps a copy of the import library, and -latomic, which
+REM     zig's MinGW CRT lacks: an empty archive satisfies it (the atomic
+REM     helpers live in compiler-rt builtins). docs/10 2026-09-18.
+copy /y "%LIBRARY_LIB%\libomp.dll.a" "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a" >nul
+if errorlevel 1 ( echo ERROR: could not copy libomp.dll.a into the CRT dir & exit /b 1 )
 powershell -NoProfile -Command "[IO.File]::WriteAllBytes('%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a', [byte[]](0x21,0x3C,0x61,0x72,0x63,0x68,0x3E,0x0A))"
 if not exist "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a" ( echo ERROR: libatomic.a not written & exit /b 1 )
-dir "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a" "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a"
+dir "%LIBRARY_BIN%\libomp.dll" "%LIBRARY_LIB%\libomp.dll.a" "%LIBRARY_LIB%\libomp.lib" "%LIBRARY_LIB%\libiomp5md.lib" "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libomp.dll.a" "%LIBRARY_PREFIX%\%CRT_TRIPLE%\lib\libatomic.a"
 
 REM Strip shared libraries -- mirrors the unix build.sh strip pass. Windows
 REM flang-rt is static-only for now (FLANG_RT_ENABLE_SHARED=OFF, see the
@@ -263,11 +280,30 @@ REM 2>nul) otherwise leave a poisoned exit code that fails the whole
 REM script AFTER a successful build.
 ver >nul
 
-REM --- tripwire (docs/18 section 6.6): this package ships no PE image at all.
-REM The import allowlist scan is skipped on purpose: the HOST env carries
-REM conda-forge llvm-openmp (MSVC-built libomp.dll imports VCRUNTIME140), which
-REM would trip a scan of %LIBRARY_BIN% although we ship only archives from it.
-REM Assert instead that no runtime DLL/EXE of ours exists anywhere.
+REM --- tripwires (docs/18 section 6.6 and 5.3) --------------------------------
+REM flang-rt-zig ships no PE image: no runtime DLL/EXE of flang-rt anywhere.
 dir /s /b "%LIBRARY_PREFIX%\*flang_rt*.dll" "%LIBRARY_PREFIX%\*flang_rt*.exe" >nul 2>nul && ( echo ERROR: a shared flang runtime image was installed; FLANG_RT_ENABLE_SHARED must stay OFF & exit /b 1 )
 ver >nul
-echo load-dep allowlist: n/a for flang-rt-zig (archives only; docs/18 section 6.6)
+REM llvm-openmp's libomp.dll: imports OS DLLs and the UCRT api-sets only
+REM (check-imports.ps1's allowlist: VCRUNTIME140, MSVCP140, libc++ or
+REM libwinpthread here means the build left zig's MinGW toolchain), and
+REM exports the OpenMP API.
+REM Measured on the 2026-11-11 cross-builds: 787 exports (x64) / 675 (arm64),
+REM the same names as conda-forge's llvm-openmp 23.1.5.
+set "OMP_OD=%BUILD_PREFIX%\Library\bin\llvm-objdump.exe"
+if not exist "%OMP_OD%" ( echo ERROR: %OMP_OD% missing for the libomp tripwire & exit /b 1 )
+"%OMP_OD%" -p "%LIBRARY_BIN%\libomp.dll" > "%SRC_DIR%\libomp-pe.txt"
+if errorlevel 1 ( echo ERROR: llvm-objdump could not read libomp.dll & exit /b 1 )
+REM The shared allowlist script, on a directory with only our two DLLs (the
+REM host env's llvm-zig files sit in %LIBRARY_BIN% too).
+set "OMP_TW=%SRC_DIR%\libomp-tripwire"
+mkdir "%OMP_TW%" 2>nul
+copy /y "%LIBRARY_BIN%\libomp.dll" "%OMP_TW%\" >nul
+copy /y "%LIBRARY_BIN%\libiomp5md.dll" "%OMP_TW%\" >nul
+powershell -ExecutionPolicy Bypass -File "%RECIPE_DIR%\check-imports.ps1" -ObjDump "%OMP_OD%" -Dir "%OMP_TW%"
+if errorlevel 1 exit /b 1
+for %%S in (omp_get_num_threads __kmpc_fork_call __kmpc_global_thread_num omp_get_max_threads) do (
+  findstr /c:" %%S" "%SRC_DIR%\libomp-pe.txt" >nul || ( echo ERROR: libomp.dll does not export %%S & exit /b 1 )
+)
+ver >nul
+echo libomp tripwire OK: OS DLLs + UCRT api-sets only, OpenMP API exported (docs/18 section 5.3)

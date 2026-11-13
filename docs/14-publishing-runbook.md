@@ -21,9 +21,10 @@ Retained beside it (`retain` in `scripts/build-alignment.json`): the 36
 before upload (2026-11-12): keep 0 / retained 36 / delete 0.
 
 Build 1 (2026-11-12, docs/10): flang-rt-zig's run requirement became
-`llvm-openmp ==23.1.5 zig_*` because universe's base-channel relation to
-conda-forge let conda-forge's libomp win over the `>=` floor in every
-channel order. Only flang-rt-zig and llvm-openmp were rebuilt; the build-0
+`llvm-openmp ==23.1.5 zig_*`, and universe's base-channel relation to
+conda-forge was removed (prefix.dev ranks a base channel above the channel,
+so conda-forge's libomp won in every order). **Consumers must list universe
+before conda-forge.** Keep universe's Base and Overrides empty. Only flang-rt-zig and llvm-openmp were rebuilt; the build-0
 upload commands below are kept as published. Build 1 upload: the same
 commands with `flang-rt-zig` / `llvm-openmp` `_1` and without lld-zig /
 flang-zig; afterwards prune deletes the 12 `_0` files of those two

@@ -18,8 +18,9 @@
 #                    the channel's own OpenMP runtime, published under
 #                    conda-forge's NAME with a `zig_*` build string (user
 #                    decision 2026-11-11, docs/18 §5.4): flang-rt-zig pins
-#                    this zig_* build, so it is the llvm-openmp every package
-#                    in that environment gets, and conda-forge packages that depend on llvm-openmp
+#                    this zig_* build (universe listed before conda-forge),
+#                    so it is the llvm-openmp every package in that
+#                    environment gets, and conda-forge packages that depend on llvm-openmp
 #                    by name (fftw, muparser, libopenblas openmp_*, mkl, ...)
 #                    still solve. A drop-in: same file names, SONAME /
 #                    install name, export set and symbol versions (docs/10
@@ -331,13 +332,12 @@ outputs:
         # The OpenMP runtime for `flang -fopenmp` (all platforms): libomp, the
         # one zig cc / zig c++ code in r-zig-pixi links, so a process never
         # carries two OpenMP runtimes. Pinned to this release's zig build
-        # (build 1, 2026-11-12): universe declares conda-forge as its base
-        # channel on prefix.dev, and with a bare floor the solver picked
-        # conda-forge's same-version llvm-openmp in every channel order
-        # (test.yml run 43323850725). With the build-string pin it picks this
-        # one in every order and priority mode, conda-forge first included
-        # (docs/10 2026-11-12); conda-forge packages that need llvm-openmp
-        # (fftw, ...) then share it.
+        # (build 1, 2026-11-12) so conda-forge's same-version llvm-openmp
+        # can never satisfy it (test.yml run 43323850725). Needs universe
+        # listed BEFORE conda-forge under strict priority, and universe with
+        # no base-channel relation on prefix.dev (a base channel outranks
+        # the channel; docs/10 2026-11-12, docs/18 §5.4). conda-forge
+        # packages that need llvm-openmp (fftw, ...) then share this one.
         - llvm-openmp ==${{ version }} zig_*
         # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06):
         # the stdlib run export reached linux-64 but not the cross-built

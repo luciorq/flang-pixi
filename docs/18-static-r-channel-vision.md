@@ -242,10 +242,20 @@ order, universe alone included (test.yml run 43323850725). With the
 build-string pin the solver takes ours in every order and priority mode,
 conda-forge first included, and conda-forge's fftw shares it (docs/10
 2026-11-12). Channel order is no longer part of the fix; the pin applies to
-every environment that contains flang-rt-zig. It relies on that base relation
-for conda-forge-first strict environments: against a channel without it,
-conda-forge first + strict cannot see our llvm-openmp and the pin is
-unsolvable. Keep the relation. Answers to §5.3, from the 2026-11-11 prototype and the
+every environment that contains flang-rt-zig.
+
+**Corrected 2026-11-12 (test.yml run 43337035109): the pin alone did not
+work; the base relation had to go.** prefix.dev ranks a base channel ABOVE
+the channel itself (`base -> current -> overrides`), so under strict
+priority conda-forge owned the name `llvm-openmp` and universe's build was
+excluded in every order: flang-rt-zig build 1 was unsolvable. (The earlier
+"ours in every order" solves listed `llvm-openmp {build = "zig*"}` as a
+direct requirement, which strict priority does not filter; a package's own
+dependency is filtered.) The user removed the base relation (overrides left
+empty). Now: **universe listed before conda-forge** + strict (default) →
+ours, shared with conda-forge's fftw; conda-forge first + strict →
+unsolvable. Channel order is again part of the contract: consumers list
+universe first (r-zig-pixi included). Answers to §5.3, from the 2026-11-11 prototype and the
 release build's tripwires:
 
 1. **Export and symbol-version parity:** Windows identical (787 / 675 names);

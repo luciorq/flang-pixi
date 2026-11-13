@@ -100,14 +100,32 @@ had assumed it would).
 **Fix (user, 2026-11-12): pin the build string.** flang-rt-zig's run
 requirement is now `llvm-openmp ==${{ version }} zig_*`; flang-rt-zig and
 llvm-openmp go to build 1 (`release` 0/0/1/1; lld-zig and flang-zig stay
-0). Solves with the explicit spec against live universe (linux-64 +
-osx-arm64 with conda-forge fftw; win-arm64): ours in all four combinations
-of {conda-forge first, universe first} × {strict, disabled}. Against a
-plain local channel holding the new build-1 packages (no base relation),
-conda-forge first + strict is **unsolvable**; the other three give ours.
-Consequence: **keep universe's base-channel relation** — removing it would
-make flang-rt-zig uninstallable for conda-forge-first strict environments
-(r-zig-pixi's current order).
+0). Build 1 was uploaded and pruned (alignment OK 0/0/1/1; keep 24 /
+retained 36 / delete 12 → 0).
+
+**test.yml run 43337035109: FAILED on all six — flang-rt-zig 23.1.5 was
+unsolvable** (`llvm-openmp 23.1.5 is excluded because due to strict
+channel priority … 'https://prefix.dev/universe/'`). The pre-upload solves
+that said "ours in every order" were wrong: they listed `llvm-openmp
+{build = "zig*"}` as a direct requirement, and strict priority does not
+filter direct requirements, only dependencies. prefix.dev ranks a base
+channel above the channel (`base -> current -> overrides`,
+prefix.dev/docs/prefix/channels/concepts), so conda-forge owned the name.
+
+**Fix 2 (user, 2026-11-12): base relation removed** from universe's
+settings (overrides left empty). The shard index dropped
+`channel_relations` at once (`created_at` 2026-11-13T00:39Z); the plain
+`repodata.json` still carried it at that time. Live solves, `flang-rt-zig
+==23.1.5` alone (+ conda-forge fftw on the four unix subdirs):
+
+| channels | strict (default) | disabled |
+|---|---|---|
+| universe, conda-forge | ours `_1`, all six; fftw shares it | ours |
+| conda-forge, universe | unsolvable | ours |
+| universe only | ours (win); unix fails only for fftw (not on universe) | same |
+
+Consequence: consumers list **universe before conda-forge**; r-zig-pixi
+reorders its channels when it switches to 23.1.5.
 
 **Build 1 results** (flang-rt staging rebuilt on gamma / omicron, restored
 from the staging cache on kappa; all tripwires OK):

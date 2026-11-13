@@ -212,4 +212,10 @@ after every upload, next to `prune-universe.py`.
 flang-rt 11, zig 0.17) — the first version bump of zig under this rule,
 done as one chain-wide wave on all six subdirs as the rule of thumb above
 prescribes. The 0.16 set is retained on the channel for the consumer that
-pins it (`retain` in `scripts/build-alignment.json`).
+pins it (`retain` in `scripts/build-alignment.json`). Third aligned release
+2026-11-12: LLVM 23.1.5, numbers reset to 0 with the version — lld-zig
+0 / flang-zig 0 / flang-rt-zig 1 / llvm-openmp 1 (llvm-zig 0). The last
+two were first published at 0 and rebuilt at 1 on all six subdirs for the
+`llvm-openmp ==23.1.5 zig_*` pin, so 1 is their release number, not a
+hotfix. `retain` is keyed by version since then and keeps
+the 23.1.1 builds 5/6/10 and 6/7/11.

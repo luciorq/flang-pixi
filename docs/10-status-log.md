@@ -11,62 +11,61 @@ successes here — a recorded failure stops the next session from repeating it.
 
 ## Current state at a glance
 
-Platforms ordered by value to [r-zig-pixi](11-r-zig-integration.md), not ease.
-linux-64 ships nothing — it is the parity harness.
+*(rewritten 2026-11-12; the 23.1.1 tables it replaces are in the entries
+below, 2026-09-18 → 2026-10-11)*
 
-| stage (LLVM **23.1.1**, zig 0.16.0) | linux-64 | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
+Platforms ordered by value to [r-zig-pixi](11-r-zig-integration.md), not ease.
+Every subdir ships, linux-64 included: r-zig-pixi uses flang-zig on its
+five platforms (linux-64 since 2026-10-03) and adds win-arm64 in its
+release 11.
+
+| LLVM **23.1.5**, conda-forge zig **0.17.0** | linux-64 | osx-arm64 | osx-64 | win-64 | linux-aarch64 | win-arm64 |
 |---|---|---|---|---|---|---|
 | build host / mode | gamma, native | omicron, native | omicron, Rosetta | kappa, native | gamma, cross | kappa, cross |
-| 1 · llvm-zig `_0` (win-arm64: `_2`) | ✅ 36 min | ✅ ~70 min | ✅ | ✅ ~2 h | ✅ | ✅ 91 min |
-| 1.5 · lld-zig `_0` (win-arm64: `_3`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 2 · flang-zig `_1` (cfg: `-fintrinsic-modules-path`; win-arm64: `_4`, `-lcompat_arm64`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 3 · flang-rt-zig (`_4` = OpenMP module + Windows shims; `_5` = cross-build finclude fix; `_7` = win-arm64 `libcompat_arm64.a`) | ✅ `_4` | ✅ `_4` | ✅ `_5` | ✅ `_4` | ✅ `_5` | ✅ `_7` |
-| smoke (hello + modules) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS** (Rosetta + GHA Intel) | ✅ **PASS** | ✅ **PASS (GHA arm runner)** | ✅ **PASS (GHA windows-11-arm, run 35469368755)** |
-| Fortran OpenMP (`-fopenmp` + `use omp_lib`, conda-forge libomp) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (GHA Intel)** | ✅ **PASS** | ✅ **PASS (GHA)** | ✅ **PASS (GHA, threads=3)** |
-| ABI probe (zig cc ↔ flang) | ✅ **PASS** (+GHA) | ✅ **PASS (GHA)** | ✅ **PASS (GHA, Intel Mac)** | n/a (unix only) | ✅ **PASS (GHA)** | n/a |
-| r-zig `check` lapack.R (Fortran compiled by 23.1.1) | ✅ **PASS** | ✅ **PASS (-O2, omicron)** | ✅ **PASS (-O2, Rosetta)** | ✅ **PASS (-O2, kappa, Rdiff 0)** | ✅ **PASS (-O2, GHA arm)** | n/a (r-zig-pixi has no win-arm64) |
-| r-zig contract suite on flang-zig-built R (Rcpp / data.table / minqa incl. package Fortran+OpenMP / pak / ps) | ✅ **PASS** | ✅ **PASS** | ✅ **PASS (Rosetta)** | ✅ **PASS (kappa)** | ✅ **PASS (GHA arm)** | n/a |
-| glibc ≤ 2.17 tripwire | ✅ | n/a | n/a | n/a | ✅ | n/a |
-| published to prefix.dev `universe` (lld/flang/flang-rt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 1 · llvm-zig `_0` (build-only, never published) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 1.5 · lld-zig `_0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 2 · flang-zig `_0` (pins `lld-zig ==23.1.5 *_0`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 3 · flang-rt-zig `_1` (requires `llvm-openmp ==23.1.5 zig_*`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 3 · llvm-openmp `zig_*_1` (libomp, an output of the flang-rt-zig recipe) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| recipe tests (hello, modules, OpenMP incl. `omp_many_args`) | ✅ | ✅ | ✅ | ✅ | cross: skipped | cross: skipped |
+| `test.yml` run 43339367038 (smoke, OpenMP with the `zig_*` libomp, ABI probe on unix) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| published to prefix.dev `universe` (2026-11-12) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ✅ pass · ❌ fail · ⬜ not attempted
 
-**Where things stand (2026-09-18 02:15 EDT).** The 23.1.1 generation is
-built on all six subdirs and smoke-passes on the four platforms we can run;
-linux-64 additionally passes the ABI probe and r-zig-pixi's `lapack.R` with
-R's LAPACK compiled by this flang. The 22.1.8 generation was never
-published and has been deleted everywhere. Remaining: hardware validation of
-linux-aarch64 / win-arm64 via GHA (workflow written, not yet pushed), the
-r-zig-pixi consumer wiring for the non-linux platforms, and the osx-arm64
-ABI probe / CRAN-flang parity checks.
+**Where things stand (2026-11-12).** The third aligned release, LLVM
+23.1.5, is published on all six subdirs: lld-zig 0, flang-zig 0,
+flang-rt-zig 1, llvm-openmp 1 (`release` in
+`scripts/build-alignment.json`; `check-build-alignment.py` OK; prune keeps
+24, retains 36, deletes 0). Beside it, the 23.1.1 builds that published
+consumers pin are retained (lld-zig 5/6, flang-zig 6/7, flang-rt-zig
+10/11; `retain` in the same file). `test.yml` run 43339367038 is green on
+all six runners. flang-rt-zig requires the channel's `llvm-openmp
+==23.1.5 zig_*`, a dependency that strict channel priority filters, so
+**consumers list universe before conda-forge**; universe has no base or
+override channel on prefix.dev since 2026-11-12 (the base relation ranked
+conda-forge above universe). Tools: rattler-build 0.80, pixi 0.84.2,
+`prefix-dev/setup-pixi` v0.11.3. r-zig-pixi's release 11 (its PR #48)
+switches to this release.
 
 ## Next actions, in order
 
-*(rewritten 2026-10-06; the restart map is `RESTART_PROMPT.md`)*
+*(rewritten 2026-11-12; the restart map is `RESTART_PROMPT.md`)*
 
-1. **zig 0.17 wave** — only when a 0.17.0 `zig_impl_*` is resolvable from
-   `conda-forge` without a label (the `dev` branch publishes snapshots under
-   `conda-forge/label/zig_dev`; checked again 2026-10-06: main label has
-   0.16.0 build 20 only). Then: bump the four `variants.yaml` pins **and
-   the four `number:` fields to lld 5 / flang 6 / flang-rt 10 / llvm 4** in
-   one change (first release under the one-number-per-release rule,
-   docs/13), hand-declare `__glibc >=2.17` / `__osx >=11.0` in `run:`
-   (docs/18 §6.3), rebuild linux-64 first and read the tripwires (glibc
-   ceiling, **load-dep allowlist**), then the other five, `test.yml`,
-   `check-build-alignment.py` with `release` set, drop the aarch64 shims
-   (`wcstold_compat.c`, `csh_arm64.def`/`-lcompat_arm64`) once win-arm64 is
-   green, consider a native win-arm64 lane. docs/17, docs/18 §6.
-2. **libomp: DECIDED 2026-11-11** — `llvm-openmp` (conda-forge's name, `zig_*` builds), an output of the
-   flang-rt-zig recipe, in the LLVM 23.1.5 release (entry 2026-11-11,
-   docs/18 §5.4); flang-rt-zig pins `llvm-openmp ==23.1.5 zig_*` from
-   build 1 (entry 2026-11-12). r-zig-pixi switches its pins in the same release.
-3. **r-zig-pixi** (user's track): re-lock to flang-rt ≥ 9; optionally move
-   linux-64 from conda-forge's flang to flang-zig so all six subdirs share
-   the static hidden runtime and `omp_lib`; prepare build.zig for 0.17
-   (docs/17 §4); the vision's asks in handoff §7. We own only handoff §6–§7
-   there.
+1. **r-zig-pixi** (user's track): its release 11 pins flang-zig 0,
+   flang-rt-zig 1 and `llvm-openmp zig_*_1` with universe first; we own
+   only handoff §6–§7 there.
+2. **Retained 23.1.1 builds:** drop a `retain` entry in
+   `scripts/build-alignment.json` only when no published consumer pins it
+   (r-zig-toolchain: 5/6/10; r-zig-pixi's lock before its release 11:
+   6/7/11).
+3. **Next release** at the `next_release` numbers (lld-zig 1, flang-zig 1,
+   flang-rt-zig 2, llvm-openmp 2, llvm-zig 1; bump flang-zig's
+   `lld_build`). Candidate content: the upstream-zig switch (docs/19 §6);
+   follow conda-forge's libomp majors (docs/18 §5.4).
 4. **osx-arm64 parity vs CRAN's experimental flang 23** (never done).
-5. **First GHA `build.yml` run** (census) — still unrun.
+5. **First GHA `build.yml` run** (census) — the rewritten workflow is still
+   unrun.
 6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
    unfiled by decision.
 

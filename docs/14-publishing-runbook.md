@@ -7,7 +7,7 @@ platform (~0.1–0.7 GB each), plus `llvm-openmp` (`zig_*` builds) since
 23.1.5 (docs/18 §5.4). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Status: third aligned release — LLVM 23.1.5 with `llvm-openmp` — build 0 PUBLISHED 2026-11-12; flang-rt-zig / llvm-openmp build 1 (zig_* pin) upload pending
+## Status: third aligned release — LLVM 23.1.5 with `llvm-openmp` — PUBLISHED 2026-11-12 (lld-zig 0 / flang-zig 0 / flang-rt-zig 1 / llvm-openmp 1 on all six subdirs)
 
 | package 23.1.5 (zig 0.17.0) | release build | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
 |---|---|---|---|---|---|---|---|
@@ -18,17 +18,22 @@ it is a build-time-only input needed to rebuild flang itself, not to use it.
 
 Retained beside it (`retain` in `scripts/build-alignment.json`): the 36
 23.1.1 files of the first and second aligned releases below. Prune dry run
-before upload (2026-11-12): keep 0 / retained 36 / delete 0.
+before upload (2026-11-12): keep 0 / retained 36 / delete 0; after the
+build-1 upload and prune: keep 24 / retained 36 / delete 0, alignment OK
+0/0/1/1, `test.yml` run 43339367038 green on all six runners (docs/10).
 
 Build 1 (2026-11-12, docs/10): flang-rt-zig's run requirement became
 `llvm-openmp ==23.1.5 zig_*`, and universe's base-channel relation to
 conda-forge was removed (prefix.dev ranks a base channel above the channel,
 so conda-forge's libomp won in every order). **Consumers must list universe
-before conda-forge.** Keep universe's Base and Overrides empty. Only flang-rt-zig and llvm-openmp were rebuilt; the build-0
-upload commands below are kept as published. Build 1 upload: the same
-commands with `flang-rt-zig` / `llvm-openmp` `_1` and without lld-zig /
-flang-zig; afterwards prune deletes the 12 `_0` files of those two
-packages (no consumer pins them).
+before conda-forge** (`pixi workspace channel add --prepend
+https://prefix.dev/universe`). Keep universe's Base and Overrides empty.
+Only flang-rt-zig and llvm-openmp were rebuilt; the build-0 upload
+commands below are kept as published. Build 1 was uploaded with the same
+commands, `flang-rt-zig` / `llvm-openmp` `_1` and without lld-zig /
+flang-zig; prune then deleted the 12 `_0` files of those two packages (no
+consumer pins them). Build 1 is the release build on all six subdirs, so
+it is not a hotfix (`hotfixes` stays empty).
 
 ### Upload commands (each host uploads its own subdirs; kappa uploads its own, see Cautions)
 
@@ -169,8 +174,9 @@ equivalent (copy the files over first, 6.5 MB/s).
 ### Earlier status (2026-09-17): SUPERSEDED for 22.1.8 (never published); reuse the procedure for 23.x
 
 The `pfx-…` API key is now stored on all three hosts (2026-09-17). The
-file lists below are the 22.1.8 generation and must be regenerated for
-23.1.1 (`ls channel/<subdir>/*23.1.1*`). The GHA workflow's `publish` job
+file lists below were the 22.1.8 generation and had to be regenerated for
+23.1.1 (`ls channel/<subdir>/*23.1.1*`); 2026-11-12: the section below now
+lists the 23.1.5 set. The GHA workflow's `publish` job
 (docs/08) can do the same upload from artifacts.
 
 ### Original status (2026-09-05): staged, BLOCKED on auth
@@ -188,50 +194,56 @@ host** — get one from the user, place it on all three hosts, rerun.
 
 ## Exactly what to upload (current generation, per host)
 
-Every command is `rattler-build upload prefix --channel universe
---skip-existing <files>` run from the channel directory of the named host.
+The current generation is LLVM 23.1.5 at `release` 0/0/1/1
+(`scripts/build-alignment.json`). Every command is `rattler-build -v
+upload prefix --channel universe --skip-existing <files>` run from the
+checkout that holds the host's `channel/` (paths in the upload commands
+above). The 24 files, by host:
 
-**gamma** (`~/projects/flang-pixi/channel`), the 2.17-floor generation:
-
-```
-linux-64/flang-rt-zig-22.1.8-zig_1e79d9a_5.conda
-linux-64/flang-zig-22.1.8-zig_a030ffe_5.conda
-linux-64/lld-zig-22.1.8-zig_1e79d9a_6.conda
-linux-aarch64/flang-rt-zig-22.1.8-zig_11eb1b2_5.conda
-linux-aarch64/flang-zig-22.1.8-zig_634dca5_5.conda
-linux-aarch64/lld-zig-22.1.8-zig_11eb1b2_6.conda
-```
-
-**omicron** (`/Users/luciorq/projects/flang-pixi/channel`, binary
-`/Users/luciorq/.pixi/bin/rattler-build`):
+**gamma** (linux-64 native, linux-aarch64 cross):
 
 ```
-osx-arm64/flang-rt-zig-22.1.8-zig_d40d935_2.conda
-osx-arm64/flang-zig-22.1.8-zig_01c9890_2.conda
-osx-arm64/lld-zig-22.1.8-zig_d40d935_4.conda
-osx-64/flang-rt-zig-22.1.8-zig_79df4ff_5.conda
-osx-64/flang-zig-22.1.8-zig_28cffc0_5.conda
-osx-64/lld-zig-22.1.8-zig_79df4ff_6.conda
+linux-64/lld-zig-23.1.5-zig_88cbac0_0.conda
+linux-64/flang-zig-23.1.5-zig_8dcaa78_0.conda
+linux-64/flang-rt-zig-23.1.5-zig_4a37d76_1.conda
+linux-64/llvm-openmp-23.1.5-zig_4a37d76_1.conda
+linux-aarch64/lld-zig-23.1.5-zig_ea2e60d_0.conda
+linux-aarch64/flang-zig-23.1.5-zig_22c055e_0.conda
+linux-aarch64/flang-rt-zig-23.1.5-zig_ea2e60d_1.conda
+linux-aarch64/llvm-openmp-23.1.5-zig_ea2e60d_1.conda
 ```
 
-**kappa** (`C:\Users\admin\projects\flang-pixi\channel`, binary
-`C:\Users\admin\.pixi\envs\rattler-build\bin\rattler-build.exe`; a ready
-launcher exists at `C:\Users\admin\upload-win.bat` driven by the
-`uploadwin` scheduled task — refresh its contents if the file list ever
-changes):
+**omicron** (osx-arm64 native, osx-64 under Rosetta):
 
 ```
-win-64/flang-rt-zig-22.1.8-zig_54cc864_2.conda
-win-64/flang-zig-22.1.8-zig_62c4a52_2.conda
-win-64/lld-zig-22.1.8-zig_54cc864_4.conda
-win-arm64/flang-rt-zig-22.1.8-zig_1e4a608_3.conda
-win-arm64/flang-zig-22.1.8-zig_b5fcbbe_3.conda
-win-arm64/lld-zig-22.1.8-zig_1e4a608_4.conda
+osx-arm64/lld-zig-23.1.5-zig_58db1ef_0.conda
+osx-arm64/flang-zig-23.1.5-zig_679338f_0.conda
+osx-arm64/flang-rt-zig-23.1.5-zig_ec1468c_1.conda
+osx-arm64/llvm-openmp-23.1.5-zig_ec1468c_1.conda
+osx-64/lld-zig-23.1.5-zig_ca035d8_0.conda
+osx-64/flang-zig-23.1.5-zig_6d949fe_0.conda
+osx-64/flang-rt-zig-23.1.5-zig_db81c21_1.conda
+osx-64/llvm-openmp-23.1.5-zig_db81c21_1.conda
 ```
 
-Build-number asymmetry is intentional: linux subdirs carry the 2.17-floor
-rebuilds (docs/13); osx/win were never affected by the glibc story, so
-their validated earlier builds remain current there.
+**kappa** (win-64 native, win-arm64 cross):
+
+```
+win-64/lld-zig-23.1.5-zig_10a5536_0.conda
+win-64/flang-zig-23.1.5-zig_3effd8f_0.conda
+win-64/flang-rt-zig-23.1.5-zig_136e600_1.conda
+win-64/llvm-openmp-23.1.5-zig_136e600_1.conda
+win-arm64/lld-zig-23.1.5-zig_279c4b1_0.conda
+win-arm64/flang-zig-23.1.5-zig_52d3e10_0.conda
+win-arm64/flang-rt-zig-23.1.5-zig_1e4a608_1.conda
+win-arm64/llvm-openmp-23.1.5-zig_1e4a608_1.conda
+```
+
+For the next release, regenerate the list with `ls
+channel/<subdir>/{lld-zig,flang-zig,flang-rt-zig,llvm-openmp}-<version>-zig_*_<N>.conda`
+at the `next_release` numbers; one number per package on all six subdirs
+(docs/13). The 22.1.8 per-host lists that stood here until 2026-11-12
+(never published, mixed build numbers per subdir) are in git history.
 
 ## After upload
 

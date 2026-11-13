@@ -1,15 +1,18 @@
 # flang-pixi documentation
 
 Build LLVM Flang for Linux, macOS and Windows using the conda-forge `zig cc` /
-`zig c++` toolchain, packaged with Pixi and the `pixi-build-rattler-build`
-backend.
+`zig c++` toolchain, packaged with standalone rattler-build and driven by Pixi
+tasks (the `pixi-build-rattler-build` backend was the original plan; retired
+as a build path 2026-09-18, docs/06).
 
-**All six platform chains are built (2026-09); publishing and the r-zig-pixi
-consumer wiring are what remain.** [`10-status-log.md`](10-status-log.md) is
-the single source of truth for what has actually been executed and what its
-result was — read it first if you are picking this up in a new session, then
-[`15-landscape-review-2026-09.md`](15-landscape-review-2026-09.md) for the
-current assessment of what is still needed and what can change.
+**LLVM 23.1.5 is published on prefix.dev `universe` for all six subdirs
+(2026-11-12): lld-zig 0, flang-zig 0, flang-rt-zig 1, llvm-openmp 1
+(`zig_*` builds); consumers list universe before conda-forge.**
+[`10-status-log.md`](10-status-log.md) is the single source of truth for
+what has actually been executed and what its result was — read its
+"Current state at a glance" first if you are picking this up in a new
+session, then `../RESTART_PROMPT.md`. The landscape review
+([15](15-landscape-review-2026-09.md)) is dated 2026-09.
 
 ## Read in this order
 
@@ -27,42 +30,45 @@ current assessment of what is still needed and what can change.
 | 10 | [Status log](10-status-log.md) | **Append-only record of what has been run.** Update this every session |
 | 11 | [r-zig-pixi integration](11-r-zig-integration.md) | **Who this is for and what they need.** Drives prioritisation |
 | 12 | [Upstream reports](12-upstream-reports.md) | Drafted, deliberately not filed |
-| 13 | [zig-feedstock coupling](13-zig-feedstock-coupling.md) | glibc 2.17 floor, ceiling tripwire, why feedstock rebuilds can break links |
-| 14 | [Publishing runbook](14-publishing-runbook.md) | Exact per-host upload commands for prefix.dev `universe` |
+| 13 | [zig-feedstock coupling](13-zig-feedstock-coupling.md) | glibc 2.17 floor, ceiling tripwire, why feedstock rebuilds can break links; one build number per package per release |
+| 14 | [Publishing runbook](14-publishing-runbook.md) | The published files and the exact per-host upload commands for prefix.dev `universe`; consumers list universe first |
 | 15 | [Landscape review 2026-09](15-landscape-review-2026-09.md) | **What changed outside the project, what is still needed, what can change** |
 | 16 | [zig-feedstock deviations 2026-09](16-zig-feedstock-deviations-2026-09.md) | What conda-forge's patched zig does differently (shared libc++ preference, baked targets, dropped flags) and what that costs hermeticity here and in R projects |
 | 17 | [zig 0.17 impact 2026-10](17-zig-0.17-impact-2026-10.md) | Is it time? What the 0.17 tag and conda-forge's 0.17 track change for our surfaces; staged plan |
-| 18 | [Static R channel vision](18-static-r-channel-vision.md) | **Long-term direction (2026-10-06):** static R packages on a libc-only contract; channel-owned libomp assessment; measured load-time deps of every published file; the allowlist tripwire; one build number per release |
+| 18 | [Static R channel vision](18-static-r-channel-vision.md) | **Long-term direction (2026-10-06):** static R packages on a libc-only contract; channel-owned libomp assessment (adopted 2026-11-11 as `llvm-openmp` `zig_*`, §5.4); measured load-time deps of every published file; the allowlist tripwire; one build number per release |
 | 19 | [Standalone Fortran toolchain](19-standalone-fortran-toolchain.md) | r-zig-pixi's conda-free archive proposal, measured: the minimal compile set per subdir (30–44 MB zstd), what the driver link needs beyond it, the compile-only cfg, Windows parity, upstream-zig estimate, `llvm-openmp >=23`; recommendation = documented set + carving script |
 
 ## The thirty-second version
 
 ```
 conda-forge zig  ─┐
-                  ├─►  stage 1: llvm-zig      (llvm + mlir + clang + lld, static)
-                  ├─►  stage 2: flang-zig     (the flang driver, out-of-tree)
-                  └─►  stage 3: flang-rt-zig  (Fortran runtime, built BY stage 2)
+                  ├─►  stage 1:   llvm-zig      (llvm + mlir + clang, static; build-only)
+                  ├─►  stage 1.5: lld-zig       (the linker flang drives)
+                  ├─►  stage 2:   flang-zig     (the flang driver, out-of-tree)
+                  └─►  stage 3:   flang-rt-zig  (Fortran runtime, built BY stage 2)
+                                  + llvm-openmp (libomp, zig_* builds, same recipe)
 ```
 
-Three separate conda packages, built in order, handed between stages through a
-local conda channel at `./channel`. We compile LLVM ourselves because `zig c++`
-statically links its own libc++, which is ABI-incompatible with the libstdc++
-that conda-forge's `llvmdev`/`clangdev`/`mlir` are built against. That single
-fact drives the entire design; [document 02](02-architecture-decisions.md)
-proves it.
+Four recipes, built in order, handed between stages through a local conda
+channel at `./channel`; everything but llvm-zig is published. We compile
+LLVM ourselves because `zig c++` statically links its own libc++, which is
+ABI-incompatible with the libstdc++ that conda-forge's
+`llvmdev`/`clangdev`/`mlir` are built against. That single fact drives the
+entire design; [document 02](02-architecture-decisions.md) proves it.
 
 ## Getting started right now
 
 ```bash
 pixi run probe          # stage 0: ~10 s, verifies the zig toolchain works
-pixi run build-llvm     # stage 1: hours
+pixi run build-all      # stages 1-3: hours
 ```
 
 ## Who this is for
 
-[`r-zig-pixi`](../../r-zig-pixi) — R built from source with zig cc/c++. It uses
-conda-forge's flang on linux-64 and **gfortran everywhere else**, because
-conda-forge ships no flang for macOS or linux-aarch64 and its `flang_win-64`
-targets the MSVC ABI R cannot use. [Doc 11](11-r-zig-integration.md) explains
-the gap, the interface to match, and why **osx-arm64 is the highest-value
-target while linux-64 ships nothing**.
+[`r-zig-pixi`](../../r-zig-pixi) — R built from source with zig cc/c++.
+Before this project it used conda-forge's flang on linux-64 and
+**gfortran everywhere else**, because conda-forge ships no flang for macOS
+or linux-aarch64 and its `flang_win-64` targets the MSVC ABI R cannot use.
+Since 2026-10-03 it uses flang-zig on every platform it builds.
+[Doc 11](11-r-zig-integration.md) explains the gap, the interface to match,
+and why **osx-arm64 was the highest-value target**.

@@ -2,6 +2,10 @@
 
 All three stages compile from the same `llvm-project` tarball
 (`llvmorg-22.1.8`), just different subdirectories of it.
+*(2026-11-12: the current tarball is `llvmorg-23.1.5`, there is a stage 1.5
+(lld-zig, `-S lld`), and stage 3 also builds libomp (`openmp` in
+`LLVM_ENABLE_RUNTIMES`, the `llvm-openmp` output). The recipes are the
+reference; this page describes the original design.)*
 
 ```
                     llvm-project-22.1.8.tar.gz
@@ -151,7 +155,7 @@ All live in each package's `recipe/variants.yaml`.
 | `llvm_targets_to_build` | `Native` | you need cross-target codegen; `X86;AArch64` for a portable package |
 | `llvm_parallel_link_jobs` | `1` | the machine has ≥ 32 GB and you want stage 1 faster |
 | `flang_parallel_compile_jobs` | `2` | ≥ 64 GB RAM. Read the warning above first |
-| `zig_compiler_version` | `0.16` | a newer zig is published and you want it |
+| `zig_compiler_version` | `0.17.0` (2026-11-12; was `0.16`) | a newer zig is published and you want it — chain-wide, as a release |
 
 ## Rough cost expectations
 

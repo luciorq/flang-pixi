@@ -31,6 +31,10 @@ Two conclusions:
 ## The matrix
 
 Ordered by value to [r-zig-pixi](11-r-zig-integration.md), not by ease.
+The table is the bring-up plan (2026-08). *2026-11-12:* every row is built,
+published (LLVM 23.1.5) and tested on native runners; r-zig-pixi uses
+flang-zig on every platform it builds; linux-aarch64 is cross-built from
+linux-64 on gamma, osx-64 natively under Rosetta on omicron (docs/10).
 
 | target | build machine | mode | r-zig-pixi today | status here |
 |---|---|---|---|---|
@@ -178,8 +182,9 @@ Run on a win-64 machine, after a native win-64 `build-all`:
 pixi run build-all-winarm
 ```
 
-which is three `pixi publish --target-platform win-arm64 --build-platform win-64`
-invocations.
+which is four `scripts/rb-stage.bat <package> win-arm64` invocations
+(standalone rattler-build; it was three `pixi publish` calls before lld-zig
+and the 2026-09-18 switch away from `pixi publish`).
 
 ### The three things that make this the hardest leg
 

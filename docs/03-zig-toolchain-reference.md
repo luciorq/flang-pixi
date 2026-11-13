@@ -131,6 +131,10 @@ reference was `GLIBC_2.2.5`.
 ## Version facts
 
 - conda-forge `zig` / `zig_*`: **0.16.0** current, 0.17.0 also published.
+  *(2026-11-12: 0.17.0 is the compiler of every release since 2026-10-11,
+  pinned in each `variants.yaml` as `zig_compiler_version: "0.17.0"`;
+  conda-forge's `zig_impl_*` 0.17.0 build 6 run-exports a C++ runtime that
+  the recipes ignore by name — docs/10 2026-11-11.)*
 - zig 0.16.0 bundles **Clang 21.1.8** — CMake reports
   `CMAKE_CXX_COMPILER_ID=Clang`, `CMAKE_CXX_COMPILER_VERSION=21.1.8`.
 - `${{ compiler('zig') }}` in a rattler-build recipe expands using the variant

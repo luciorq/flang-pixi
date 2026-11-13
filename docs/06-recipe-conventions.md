@@ -141,7 +141,7 @@ Every recipe ships one, for two reasons:
 
    ```yaml
    zig_compiler: [zig]
-   zig_compiler_version: ["0.16"]
+   zig_compiler_version: ["0.16"]   # 2026-11-12: "0.17.0" in every variants.yaml
    ```
 
    the recipe fails to render. These values mirror
@@ -206,9 +206,9 @@ on Windows automatically.
 
 | convention | value | why |
 |---|---|---|
-| package names | `llvm-zig`, `flang-zig`, `flang-rt-zig` | must never be confused with, or co-solved against, conda-forge's `llvmdev` / `flang` |
+| package names | `llvm-zig`, `lld-zig`, `flang-zig`, `flang-rt-zig`; plus `llvm-openmp` (`zig_*` builds) since 23.1.5 | must never be confused with, or co-solved against, conda-forge's `llvmdev` / `flang`; `llvm-openmp` deliberately takes conda-forge's name (docs/18 §5.4) |
 | build string | `zig_${{ hash }}_${{ build_number }}` | the `zig_` prefix is a visible warning label in `conda list` |
-| version | `22.1.8` for all three | they are one source tree; a version skew between stages is a link error |
+| version | one LLVM version for all recipes (`23.1.5` since 2026-11-11; was `22.1.8`) | they are one source tree; a version skew between stages is a link error |
 
 ## Environment variables available in build scripts
 

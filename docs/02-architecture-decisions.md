@@ -140,6 +140,10 @@ Reasons:
 **Cost:** stage 1's output has to be packaged and reinstalled before stage 2 can
 use it, which adds a compress/decompress round trip of a multi-GB tree. Accepted.
 
+*(2026-11-12: four recipes now — lld-zig is stage 1.5 and flang-rt-zig
+also outputs `llvm-openmp`; the hand-off is standalone rattler-build via
+`scripts/rb-stage.sh`, not `pixi publish`, since 2026-09-18 — docs/06.)*
+
 **Hand-off mechanism:** `pixi publish --to ./channel` writes a properly indexed
 local conda channel; stages 2 and 3 list `../../channel` as their first channel.
 Note that `pixi build -o DIR` is *not* sufficient — it emits a bare `.conda`
@@ -177,3 +181,8 @@ conda-forge build of the same source. The tarball SHA-256
 
 Building LLVM 22 with the Clang 21 inside zig 0.16 is well within LLVM's
 supported host-compiler range.
+
+*(2026-11-12: superseded in value, not in rule — 22.1.8 was never
+published; the version moved to 23.1.1 (2026-09) and to 23.1.5
+(2026-11-11), built with zig 0.17.0; all recipes still share one pinned
+tarball.)*

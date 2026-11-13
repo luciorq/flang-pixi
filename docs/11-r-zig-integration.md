@@ -19,6 +19,13 @@ close exactly that gap.**
 > remaining platforms will hit; items 5–8 are new. A full review of the
 > consumer wiring plus every trap worth transferring lives next to the
 > consumer's plan: r-zig-pixi `.github/devdocs/consolidation/FLANG_PIXI_HANDOFF.md`.
+>
+> **2026-11-12:** done on every platform — r-zig-pixi uses flang-zig on all
+> its platforms (linux-64 since 2026-10-03; win-arm64 from its release 11),
+> no gfortran anywhere. Its release 11 consumes LLVM 23.1.5: flang-zig 0,
+> flang-rt-zig 1, `llvm-openmp` `zig_*_1`, with universe listed before
+> conda-forge (items 4, 7, 8 below). The gap table below is the starting
+> point, kept as history.
 
 ---
 
@@ -183,6 +190,11 @@ flang-rt-zig = "*"
 
 plus adding this project's channel.
 
+*2026-11-12:* linux-64 moved to flang-zig too (2026-10-03). One name now
+does collide on purpose: `llvm-openmp`, the channel's libomp (`zig_*`
+builds) since 23.1.5 (item 7), so universe must be listed **before**
+conda-forge.
+
 **5. Windows: `flang.cfg` already carries the driver-side glue.**
 `Library/bin/flang.cfg` in `flang-zig` passes `-fuse-ld=lld` (lld-zig's
 `ld.lld`, no MSVC link.exe anywhere), `-fintrinsic-modules-path` to the
@@ -215,6 +227,13 @@ channel-owned `llvm-openmp-zig` drop-in (same names, soname, exports,
 mutual exclusion with conda-forge's, switched together with r-zig-pixi in
 the zig 0.17 wave) and lists what must be checked first; conda-forge's
 libomp is libc-only on Linux/macOS and MSVC-built on Windows.
+*Changed 2026-11-11/12 (LLVM 23.1.5, docs/18 §5.4):* the channel now builds
+libomp. `llvm-openmp` with `zig_*` build strings is an output of the
+flang-rt-zig recipe; `omp_lib.mod` / `omp_lib.h` come from openmp's own
+runtimes build; flang-rt-zig 1 requires `llvm-openmp ==23.1.5 zig_*`.
+Strict channel priority filters that dependency by the first channel that
+has the name, so consumers list universe before conda-forge, and every
+conda-forge package in the environment that needs `llvm-openmp` gets ours.
 
 **8. Build numbers per subdir are not uniform.**
 Pin by version (`flang-zig ==23.1.1`), never by build string: the win-arm64
@@ -226,6 +245,12 @@ rebuilt on all six subdirs at **one build number** (zig 0.17 wave: lld-zig
 5, flang-zig 6, flang-rt-zig 10), so a consumer lock can pin a single
 `build-number` on every platform; per-subdir rebuilds between releases are
 declared hotfixes.
+*2026-11-12:* applied since 2026-10-07; one number per package is now the
+rule, so pin version and build number (r-zig-pixi:
+`flang-zig = { version = "==23.1.5", build-number = "==0" }`,
+flang-rt-zig `==1`, `llvm-openmp = { version = "==23.1.5", build =
+"zig_*_1" }`); flang-zig pins its lld-zig by build string itself.
+docs/14 lists the published files.
 
 **9. Link the runtime archive by path, not `-lflang_rt.runtime`.**
 The resource dir holds `libflang_rt.runtime.a` *and* a shared library on

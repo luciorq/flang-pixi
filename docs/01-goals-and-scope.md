@@ -13,6 +13,10 @@ conda-forge's flang on linux-64 and falls back to **gfortran everywhere else**,
 because conda-forge ships no flang for macOS or linux-aarch64 and its
 `flang_win-64` targets the MSVC ABI that R cannot use.
 
+*2026-11-12:* the gap is closed — r-zig-pixi uses this project's flang-zig
+on every platform it builds (linux-64 since 2026-10-03), and LLVM 23.1.5
+is published for all six subdirs (docs/10, "Current state at a glance").
+
 Closing that gap is the point of this project. See
 [11 — r-zig-pixi integration](11-r-zig-integration.md) for the full picture;
 it is the document that should drive prioritisation.
@@ -27,6 +31,10 @@ conda-forge's `llvm-openmp` (the one runtime zig cc code already links; we
 ship only the `omp_lib` module and the Windows link shims), and the
 unvalidated platforms (linux-aarch64, win-arm64) get their execution proof
 from the GHA `test.yml` matrix rather than from hardware we own.
+*2026-11-12:* the OpenMP part changed with LLVM 23.1.5 — the channel builds
+its own libomp, published as `llvm-openmp` with `zig_*` build strings from
+the flang-rt-zig recipe (docs/18 §5.4), and the consumer set is lld-zig,
+flang-zig, flang-rt-zig and llvm-openmp.
 
 ## Priority order
 

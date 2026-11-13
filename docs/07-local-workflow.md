@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- `pixi` ≥ 0.75 (`pixi --version`)
+- `pixi` ≥ 0.75 (`pixi --version`); CI and the lock use 0.84.2, and the
+  lock's rattler-build is 0.80.0 (2026-11-12)
 - Disk: budget **60 GB**. The llvm-project source tree, an LLVM release build
   tree, three package payloads and the local channel all coexist.
 - RAM: 16 GB is workable with the default job caps. Below that, expect OOM in
@@ -17,31 +18,32 @@ pixi run probe-win        # windows
 
 # 1-3. the actual build, hours
 pixi run build-llvm
+pixi run build-lld
 pixi run build-flang
-pixi run build-flang-rt
+pixi run build-flang-rt   # also produces llvm-openmp (23.1.5+)
 # or: pixi run build-all
 
 # acceptance
 pixi run smoke
 ```
 
-Each stage publishes into `./channel/`, which the next stage reads. Nothing is
-uploaded anywhere.
+Each stage runs standalone rattler-build through `scripts/rb-stage.sh`
+(`.bat` on Windows) and copies its packages into `./channel/<subdir>`, which
+the next stage reads. Nothing is uploaded anywhere (docs/14 for that).
 
 ### win-arm64
 
 Cross-only, from a win-64 machine, after the native win-64 build:
 
 ```powershell
-# first, set llvm_targets_to_build to "X86;AArch64" in
-# packages/llvm-zig/recipe/variants.yaml and rebuild the win-64 stage 1 —
-# see docs/05-platform-matrix.md
+# llvm_targets_to_build is already "X86;AArch64" in
+# packages/llvm-zig/recipe/variants.yaml (see docs/05-platform-matrix.md)
 pixi run build-all
 pixi run build-all-winarm
 ```
 
 The win-arm64 packages cannot be tested on the win-64 host; validation needs an
-arm64 machine.
+arm64 machine (`test.yml`'s `windows-11-arm` runner).
 
 ## Iterating
 
@@ -64,6 +66,10 @@ debugging a CMake flag:
 ```bash
 pixi publish --path packages/llvm-zig --to ./channel --build-dir .bld
 ```
+
+*(2026-11-12: `pixi publish` is retired as a build path since 2026-09-18 —
+it ignores `variants.yaml`. `scripts/rb-stage.sh` leaves a failed build's work tree under `RB_OUT`
+until the next build starts; see the script header.)*
 
 **Dropping into a failed build:** `rattler-build debug` reconstructs the build
 environment for a recipe so you can run `cmake` by hand:

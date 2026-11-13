@@ -3,6 +3,11 @@
 Ordered roughly by expected pain. Each entry says what would happen, how you
 would recognise it, and what to do.
 
+*2026-11-12:* written before the bring-up. macOS (R1), win-arm64 (R3) and
+windows-gnu (R9) are built, published (LLVM 23.1.5) and tested on native
+runners; [10-status-log.md](10-status-log.md) records how each risk played
+out.
+
 ---
 
 ## R1 — macOS may not work at all, and macOS is the whole point

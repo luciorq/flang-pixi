@@ -274,6 +274,11 @@ zig is the reference"), not a correctness fix — docs/18 §6.4's "keep
 
 ## 7. OpenMP: pin `llvm-openmp >=23` on unix too
 
+*2026-11-12: superseded by LLVM 23.1.5 — flang-rt-zig requires
+`llvm-openmp ==23.1.5 zig_*` on every subdir (build 1), the channel's own
+libomp from the same recipe (docs/18 §5.4). The analysis below is from
+2026-10-06.*
+
 Today: win-64/win-arm64 `depends` carry `llvm-openmp >=23.1.1` (from the
 host dependency's run export), the four unix subdirs carry an unbounded
 `llvm-openmp`. The shipped `omp_lib.mod` (225 `omp_*` names) is generated

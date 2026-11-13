@@ -58,7 +58,8 @@ ABI probe / CRAN-flang parity checks.
    green, consider a native win-arm64 lane. docs/17, docs/18 §6.
 2. **libomp: DECIDED 2026-11-11** — `llvm-openmp` (conda-forge's name, `zig_*` builds), an output of the
    flang-rt-zig recipe, in the LLVM 23.1.5 release (entry 2026-11-11,
-   docs/18 §5.4). r-zig-pixi switches its pins in the same release.
+   docs/18 §5.4); flang-rt-zig pins `llvm-openmp ==23.1.5 zig_*` from
+   build 1 (entry 2026-11-12). r-zig-pixi switches its pins in the same release.
 3. **r-zig-pixi** (user's track): re-lock to flang-rt ≥ 9; optionally move
    linux-64 from conda-forge's flang to flang-zig so all six subdirs share
    the static hidden runtime and `omp_lib`; prepare build.zig for 0.17
@@ -68,6 +69,57 @@ ABI probe / CRAN-flang parity checks.
 5. **First GHA `build.yml` run** (census) — still unrun.
 6. Hygiene: `docs/11-r-integration.md` duplicate; `docs/12` drafts stay
    unfiled by decision.
+
+## 2026-11-12 — 23.1.5 published; flang-rt-zig / llvm-openmp build 1 pins `llvm-openmp ==23.1.5 zig_*`
+
+**Publish (user, 2026-11-12):** the 24-file build-0 consumer set uploaded
+from gamma / omicron / kappa after the preflight (all three tokens valid
+after the user's re-login). `check-build-alignment.py` → OK at 0/0/0/0;
+prune dry run keep 24 / retained 36 / delete 0.
+
+**test.yml run 43323850725: FAILED on all six runners**, smoke green, the
+OpenMP step's new guard red: `llvm-openmp 23.1.5 h7148c6a_0` (conda-forge)
+was installed next to `flang-rt-zig zig_*_0`, although ci-omp.sh prepends
+universe.
+
+**Cause: universe declares conda-forge as its base channel on prefix.dev.**
+Its repodata and shard index carry `"channel_relations": {"base":
+"../conda-forge"}`. Solves on gamma (pixi 0.84.2, `flang-rt-zig ==23.1.5`
+with the `>=23.1.5` floor):
+
+| channels | priority | llvm-openmp |
+|---|---|---|
+| universe, conda-forge | strict (default) | conda-forge |
+| universe only | strict | conda-forge (through the base relation) |
+| universe, conda-forge | disabled | ours |
+| local file:// copy, conda-forge | strict | ours |
+
+So the channel order was never going to decide on prefix.dev (docs/18 §5.4
+had assumed it would).
+
+**Fix (user, 2026-11-12): pin the build string.** flang-rt-zig's run
+requirement is now `llvm-openmp ==${{ version }} zig_*`; flang-rt-zig and
+llvm-openmp go to build 1 (`release` 0/0/1/1; lld-zig and flang-zig stay
+0). Solves with the explicit spec against live universe (linux-64 +
+osx-arm64 with conda-forge fftw; win-arm64): ours in all four combinations
+of {conda-forge first, universe first} × {strict, disabled}. Against a
+plain local channel holding the new build-1 packages (no base relation),
+conda-forge first + strict is **unsolvable**; the other three give ours.
+Consequence: **keep universe's base-channel relation** — removing it would
+make flang-rt-zig uninstallable for conda-forge-first strict environments
+(r-zig-pixi's current order).
+
+**Build 1 results** (flang-rt staging rebuilt on gamma / omicron, restored
+from the staging cache on kappa; all tripwires OK):
+
+| subdir | host | string | libomp exports / imports | tests |
+|---|---|---|---|---|
+| linux-64 | gamma | zig_4a37d76_1 | 1180 | native, pass |
+| linux-aarch64 | gamma (cross) | zig_ea2e60d_1 | 1070 | skipped (cross) |
+| osx-arm64 | omicron | zig_ec1468c_1 | 1649 | native, pass |
+| osx-64 | omicron (Rosetta) | zig_db81c21_1 | 1768 | native, pass |
+| win-64 | kappa | zig_136e600_1 | OS DLLs + UCRT only | native, pass |
+| win-arm64 | kappa (cross) | zig_1e4a608_1 | OS DLLs + UCRT only | skipped (cross) |
 
 ## 2026-11-11 — LLVM 23.1.5 and the channel's own libomp (llvm-openmp, zig_* builds): third aligned release, all at build 0 — IN PROGRESS
 

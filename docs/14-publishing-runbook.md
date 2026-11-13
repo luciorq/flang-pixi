@@ -7,18 +7,27 @@ platform (~0.1–0.7 GB each), plus `llvm-openmp` (`zig_*` builds) since
 23.1.5 (docs/18 §5.4). `llvm-zig` stays in the local file:// channels;
 it is a build-time-only input needed to rebuild flang itself, not to use it.
 
-## Next: third aligned release — LLVM 23.1.5, build 0, with `llvm-openmp` — built 2026-11-11, upload pending
+## Status: third aligned release — LLVM 23.1.5 with `llvm-openmp` — build 0 PUBLISHED 2026-11-12; flang-rt-zig / llvm-openmp build 1 (zig_* pin) upload pending
 
 | package 23.1.5 (zig 0.17.0) | release build | linux-64 | linux-aarch64 | osx-arm64 | osx-64 | win-64 | win-arm64 |
 |---|---|---|---|---|---|---|---|
 | lld-zig | **0** | `zig_88cbac0_0` | `zig_ea2e60d_0` | `zig_58db1ef_0` | `zig_ca035d8_0` | `zig_10a5536_0` | `zig_279c4b1_0` |
 | flang-zig | **0** | `zig_8dcaa78_0` | `zig_22c055e_0` | `zig_679338f_0` | `zig_6d949fe_0` | `zig_3effd8f_0` | `zig_52d3e10_0` |
-| flang-rt-zig | **0** | `zig_4a37d76_0` | `zig_ea2e60d_0` | `zig_ec1468c_0` | `zig_db81c21_0` | `zig_136e600_0` | `zig_1e4a608_0` |
-| llvm-openmp | **0** | `zig_4a37d76_0` | `zig_ea2e60d_0` | `zig_ec1468c_0` | `zig_db81c21_0` | `zig_136e600_0` | `zig_1e4a608_0` |
+| flang-rt-zig | **1** | `zig_4a37d76_1` | `zig_ea2e60d_1` | `zig_ec1468c_1` | `zig_db81c21_1` | `zig_136e600_1` | `zig_1e4a608_1` |
+| llvm-openmp | **1** | `zig_4a37d76_1` | `zig_ea2e60d_1` | `zig_ec1468c_1` | `zig_db81c21_1` | `zig_136e600_1` | `zig_1e4a608_1` |
 
 Retained beside it (`retain` in `scripts/build-alignment.json`): the 36
 23.1.1 files of the first and second aligned releases below. Prune dry run
 before upload (2026-11-12): keep 0 / retained 36 / delete 0.
+
+Build 1 (2026-11-12, docs/10): flang-rt-zig's run requirement became
+`llvm-openmp ==23.1.5 zig_*` because universe's base-channel relation to
+conda-forge let conda-forge's libomp win over the `>=` floor in every
+channel order. Only flang-rt-zig and llvm-openmp were rebuilt; the build-0
+upload commands below are kept as published. Build 1 upload: the same
+commands with `flang-rt-zig` / `llvm-openmp` `_1` and without lld-zig /
+flang-zig; afterwards prune deletes the 12 `_0` files of those two
+packages (no consumer pins them).
 
 ### Upload commands (each host uploads its own subdirs; kappa uploads its own, see Cautions)
 

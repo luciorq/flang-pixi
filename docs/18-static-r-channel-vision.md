@@ -232,7 +232,20 @@ name a channel listed before conda-forge supplies the one `llvm-openmp`
 every package gets; the price is that channel order is part of the fix and
 the channel must keep up with conda-forge's libomp majors (docs/10
 2026-11-11, "Package name"). An exception to docs/11 item 4 for the
-runtime only. Answers to §5.3, from the 2026-11-11 prototype and the
+runtime only.
+
+**Amended 2026-11-12 (user): flang-rt-zig pins `llvm-openmp ==23.1.5 zig_*`
+(build 1).** Channel order did not decide: universe declares conda-forge as
+its base channel on prefix.dev (`channel_relations.base`), and with the
+`>=23.1.5` floor the solver took conda-forge's same-version libomp in every
+order, universe alone included (test.yml run 43323850725). With the
+build-string pin the solver takes ours in every order and priority mode,
+conda-forge first included, and conda-forge's fftw shares it (docs/10
+2026-11-12). Channel order is no longer part of the fix; the pin applies to
+every environment that contains flang-rt-zig. It relies on that base relation
+for conda-forge-first strict environments: against a channel without it,
+conda-forge first + strict cannot see our llvm-openmp and the pin is
+unsolvable. Keep the relation. Answers to §5.3, from the 2026-11-11 prototype and the
 release build's tripwires:
 
 1. **Export and symbol-version parity:** Windows identical (787 / 675 names);

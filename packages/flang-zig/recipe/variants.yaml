@@ -2,7 +2,7 @@
 # for why zig_compiler / c_stdlib have to be spelled out.
 zig_compiler:
   - zig
-# Exact zig VERSION pin (0.16.0, not 0.16.*): a zig minor bump swaps the
+# Exact zig VERSION pin (0.17.0, not 0.17.*): a zig minor bump swaps the
 # bundled clang, libc++ and MinGW CRT under the whole toolchain and must be a
 # deliberate, chain-wide rebuild. The feedstock BUILD number is deliberately
 # NOT pinned — feedstock rebuilds changed the implicit glibc baseline once

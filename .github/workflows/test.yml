@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: bash scripts/ci-smoke.sh "$CHANNEL" "$VERSION" 2>&1 | tee smoke.log
 
-      - name: OpenMP (directives + omp_lib, -fopenmp against conda-forge libomp)
+      - name: OpenMP (directives + omp_lib, -fopenmp against the channel's llvm-openmp zig_*)
         shell: bash
         run: bash scripts/ci-omp.sh "$CHANNEL" "$VERSION" 2>&1 | tee omp.log
 

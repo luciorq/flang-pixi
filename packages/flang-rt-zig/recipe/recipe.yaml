@@ -17,9 +17,9 @@
 #   llvm-openmp      libomp (+ its headers and the Windows import libraries):
 #                    the channel's own OpenMP runtime, published under
 #                    conda-forge's NAME with a `zig_*` build string (user
-#                    decision 2026-11-11, docs/18 §5.4): on a channel listed
-#                    before conda-forge it is the llvm-openmp every package
-#                    gets, so conda-forge packages that depend on llvm-openmp
+#                    decision 2026-11-11, docs/18 §5.4): flang-rt-zig pins
+#                    this zig_* build, so it is the llvm-openmp every package
+#                    in that environment gets, and conda-forge packages that depend on llvm-openmp
 #                    by name (fftw, muparser, libopenblas openmp_*, mkl, ...)
 #                    still solve. A drop-in: same file names, SONAME /
 #                    install name, export set and symbol versions (docs/10
@@ -125,9 +125,13 @@ build:
   #    library instead of one generated from conda-forge's libomp.dll. The
   #    23.1.1 releases (flang-rt 10/11) stay on universe while consumers pin
   #    them (`retain` in scripts/build-alignment.json, now per version).
-  # NEXT: 1 — the upstream-zig switch (docs/19 §6); `next_release` in
+  # 1: (2026-11-12) flang-rt-zig and llvm-openmp only: run requirement
+  #    `llvm-openmp ==23.1.5 zig_*` instead of the `>=23.1.5` floor, which let
+  #    conda-forge's libomp in through universe's base-channel relation.
+  #    lld-zig / flang-zig stay 0.
+  # NEXT: 2 — the upstream-zig switch (docs/19 §6); `next_release` in
   #    scripts/build-alignment.json.
-  number: 0
+  number: 1
 
 outputs:
   # --- the one build: flang-rt + compiler-rt + openmp (build.sh / build.bat) --
@@ -326,14 +330,15 @@ outputs:
       run:
         # The OpenMP runtime for `flang -fopenmp` (all platforms): libomp, the
         # one zig cc / zig c++ code in r-zig-pixi links, so a process never
-        # carries two OpenMP runtimes. A floor, not an exact pin: the package
-        # shares conda-forge's name, and with conda-forge listed first
-        # (strict channel priority) only conda-forge's llvm-openmp is
-        # visible, so an exact pin to this build would make flang-rt-zig
-        # uninstallable there. omp_lib.mod declares 23.x entry points, which
-        # conda-forge's >= 23.1.5 exports too. With universe first the
-        # solver takes this build (docs/18 §5.4).
-        - llvm-openmp >=${{ version }}
+        # carries two OpenMP runtimes. Pinned to this release's zig build
+        # (build 1, 2026-11-12): universe declares conda-forge as its base
+        # channel on prefix.dev, and with a bare floor the solver picked
+        # conda-forge's same-version llvm-openmp in every channel order
+        # (test.yml run 43323850725). With the build-string pin it picks this
+        # one in every order and priority mode, conda-forge first included
+        # (docs/10 2026-11-12); conda-forge packages that need llvm-openmp
+        # (fftw, ...) then share it.
+        - llvm-openmp ==${{ version }} zig_*
         # Hand-declared C-library floors (docs/18 §6.3, release 2026-10-06):
         # the stdlib run export reached linux-64 but not the cross-built
         # linux-aarch64 packages (they declared no __glibc at all), so the

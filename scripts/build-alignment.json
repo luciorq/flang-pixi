@@ -4,14 +4,14 @@
   "release": {
     "lld-zig": 0,
     "flang-zig": 0,
-    "flang-rt-zig": 0,
-    "llvm-openmp": 0
+    "flang-rt-zig": 1,
+    "llvm-openmp": 1
   },
   "next_release": {
     "lld-zig": 1,
     "flang-zig": 1,
-    "flang-rt-zig": 1,
-    "llvm-openmp": 1,
+    "flang-rt-zig": 2,
+    "llvm-openmp": 2,
     "llvm-zig": 1
   },
   "hotfixes": [],
